@@ -1,0 +1,28 @@
+[build-system]
+requires = [
+    "hatchling>=1.27.0"
+]
+build-backend = "hatchling.build"
+
+[project]
+name = "pypomes_sob"
+version = "0.0.5"
+authors = [
+  { name="GT Nunes", email="wisecoder01@gmail.com" }
+]
+description = "A collection of Python pomes, penyeach (simple object  module)"
+readme = "README.md"
+requires-python = ">=3.12"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent"
+]
+dependencies = [
+    "pypomes_core>=2.5.1",
+    "pypomes_db>=2.3.5"
+]
+
+[project.urls]
+"Homepage" = "https://github.com/TheWiseCoder/PyPomes-SOB"
+"Bug Tracker" = "https://github.com/TheWiseCoder/PyPomes-SOB/issues"
