@@ -5,5 +5,5 @@ __all__ = [
 ]
 
 from importlib.metadata import version
-__version__: str = version("pypomes_core")
+__version__: str = version("pypomes_sob")
 __version_info__: tuple = tuple(int(i) for i in __version__.split(".") if i.isdigit())
