@@ -41,6 +41,9 @@ class PySob:
         # maps to the entity's PK in its DB table (returned on INSERT operations)
         self.id: int | str = 0
 
+        # determine whether the instance exists in the database
+        self._is_new: bool = True
+
         if where_data:
             self.load(errors=errors,
                       omit_nulls=True,
@@ -76,19 +79,17 @@ class PySob:
                 errors.append(msg)
             if self._logger:
                 self._logger.error(msg=msg)
-        elif PySob._db_specs[self.__class__][3]:
-            # PK is as identity column
-            self.id = rec[0]
+        else:
+            self._is_new = False
+            if PySob._db_specs[self.__class__][3]:
+                # PK is as identity column
+                self.id = rec[0]
 
-        return not errors
+        return not op_errors
 
     def update(self,
                errors: list[str] | None,
-               load_references: bool = False,
-               db_conn: Any = None) -> bool | None:
-
-        # inicialize the return variable
-        result: bool | None = None
+               db_conn: Any = None) -> bool:
 
         # prepare data for UPDATE
         update_data: dict[str, Any] = self.to_columns(omit_nulls=False)
@@ -104,23 +105,29 @@ class PySob:
                   max_count=1,
                   connection=db_conn,
                   logger=self._logger)
-        msg: str = None
         if op_errors:
-            msg = ("Error UPDATEing table "
-                   f"{PySob._db_specs[self.__class__][0]}: {'; '.join(op_errors)}")
-        elif load_references:
-            self.__load_references(errors=op_errors,
-                                   db_conn=db_conn)
-            msg = "; ".join(op_errors)
-
-        if msg:
+            msg: str = ("Error UPDATEing table "
+                        f"{PySob._db_specs[self.__class__][0]}: {'; '.join(op_errors)}")
             if isinstance(errors, list):
                 errors.append(msg)
             if self._logger:
                 self._logger.error(msg=msg)
-        else:
-            result = True
 
+        return not op_errors
+
+    def persist(self,
+                errors: list[str] | None,
+                db_conn: Any = None) -> bool:
+
+        # declare the return variable
+        result: bool
+
+        if self._is_new:
+            result = self.insert(errors=errors,
+                                 db_conn=db_conn)
+        else:
+            result = self.update(errors=errors,
+                                 db_conn=db_conn)
         return result
 
     def delete(self,
@@ -175,10 +182,10 @@ class PySob:
                 self._logger.warning(msg=f"'{attr}'is not an attribute of "
                                          f"{PySob._db_specs[self.__class__][0]}")
 
-    def exists(self,
-               errors: list[str] | None,
-               where_data: dict[str, Any] = None,
-               db_conn: Any = None) -> bool | None:
+    def in_db(self,
+              errors: list[str] | None,
+              where_data: dict[str, Any] = None,
+              db_conn: Any = None) -> bool | None:
 
         if not where_data:
             if self.id:
@@ -245,6 +252,7 @@ class PySob:
                     self.__dict__["id"] = rec[inx]
                 else:
                     self.__dict__[attr] = rec[inx]
+            self._is_new = False
             result = True
 
         return result
@@ -354,6 +362,21 @@ class PySob:
                         logger=logger)
 
     @staticmethod
+    def exists(errors: list[str] | None,
+               where_data: dict[str, Any],
+               db_conn: Any = None,
+               logger: Logger = None) -> int | None:
+
+        # obtain the invoking class
+        cls: Type[PySob] = PySob.__get_invoking_class()
+
+        return db_exists(errors=errors,
+                         table=PySob._db_specs[cls][0],
+                         where_data=where_data,
+                         connection=db_conn,
+                         logger=logger)
+
+    @staticmethod
     def retrieve(errors: list[str] | None,
                  where_data: dict[str, Any] = None,
                  load_references: bool = False,
@@ -364,7 +387,7 @@ class PySob:
         # inicialize the return variable
         result: list[PySob] | None = None
 
-        # obtain rtheinvoking class
+        # obtain the invoking class
         cls: Type[PySob] = PySob.__get_invoking_class()
 
         op_errors: list[str] = []
