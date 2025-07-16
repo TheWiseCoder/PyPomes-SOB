@@ -7,11 +7,13 @@ from pypomes_db import (
     db_exists, db_count, db_select,
     db_insert, db_update, db_delete
 )
-# 'type' is not a viable replacement for 'typing.Type', because the former does not accept subclasses
-from typing import Any, ClassVar, Final, Type  # noqa
+from typing import Any, TypeVar
+
+# 'Sob' stands for all subclasses of 'PySob'
+Sob = TypeVar("Sob",
+              bound="PySob")
 
 
-# ruff: noqa: UP006  - checks for generics that can be replaced with standard library variants based on PEP 585
 class PySob:
     """
     Root entity.
@@ -22,13 +24,14 @@ class PySob:
     #     - the name of the entity's DB table
     #     - the name of its PK attribute (maps to 'self.id')
     #     - the type of its PK attribute (currently, 'int' and 'str' are supported)
-    #     - whether the PK attribute is an identity (values generated automatically by the DB)
-    _db_specs: ClassVar[dict[Type[PySob], (StrEnum | str, StrEnum | str, type, bool)]] = {}
+    #     - whether the PK attribute is an identity (has values generated automatically by the DB)
+    _db_specs: dict[type[Sob], (StrEnum | str, StrEnum | str, type, bool)] = {}
 
     # maps input parameters to DB columns
-    _attrs_map: ClassVar[dict[Type[PySob], dict[StrEnum | str, StrEnum | str]]] = {}
+    _attrs_map: dict[type[Sob], dict[StrEnum | str, StrEnum | str]] = {}
 
-    _sob_references: ClassVar[dict[Type[PySob], list[Type[PySob]]]] = {}
+    # holds 'PySob' subclasses referred to by the current class
+    _sob_references: dict[type[Sob], list[type[Sob]]] = {}
 
     def __init__(self,
                  errors: list[str] = None,
@@ -295,10 +298,10 @@ class PySob:
 
     # noinspection PyMethodMayBeStatic, PyUnusedLocal
     def load_reference(self,
-                       __cls: Type[PySob],
+                       __cls: type[Sob],
                        /,
                        errors: list[str] | None,
-                       db_conn: Any | None) -> PySob | list[PySob] | None:  # noqa: ARG002
+                       db_conn: Any | None) -> Sob | list[Sob] | None:  # noqa: ARG002
 
         # must be implemented by subclasses containing references
         msg: str = f"Subclass {__cls.__module__}.{__cls.__qualname__} failed to implement 'load_reference()'"
@@ -328,19 +331,19 @@ class PySob:
                 break
 
     @staticmethod
-    def initialize(__cls: Type[PySob],
+    def initialize(__cls: type[Sob],
                    /,
                    db_specs: tuple[StrEnum | str, StrEnum | str, int | str] |
                              tuple[StrEnum | str, StrEnum | str, int, bool],  # noqa
                    attrs_map: dict[StrEnum | str, StrEnum | str] = None,
-                   sob_references: list[Type[PySob]] = None) -> None:
+                   sob_references: list[type[Sob]] = None) -> None:
 
         # initialize the class
         specs: list = list(db_specs)
         if len(specs) == 3:
             # 'id' defaults to being an identity attribute in the DB for type 'int'
             specs.append(specs[2] is int)
-        PySob._db_specs.update({__cls: tuple(db_specs)})
+        PySob._db_specs.update({__cls: tuple(specs)})
         if attrs_map:
             PySob._attrs_map.update({__cls: attrs_map})
         if sob_references:
@@ -353,7 +356,7 @@ class PySob:
               logger: Logger = None) -> int | None:
 
         # obtain the invoking class
-        cls: Type[PySob] = PySob.__get_invoking_class()
+        cls: type[Sob] = PySob.__get_invoking_class()
 
         return db_count(errors=errors,
                         table=PySob._db_specs[cls][0],
@@ -368,7 +371,7 @@ class PySob:
                logger: Logger = None) -> int | None:
 
         # obtain the invoking class
-        cls: Type[PySob] = PySob.__get_invoking_class()
+        cls: type[Sob] = PySob.__get_invoking_class()
 
         return db_exists(errors=errors,
                          table=PySob._db_specs[cls][0],
@@ -380,30 +383,33 @@ class PySob:
     def retrieve(errors: list[str] | None,
                  where_data: dict[str, Any] = None,
                  load_references: bool = False,
-                 required: bool = False,
+                 min_count: int = None,
+                 max_count: int = None,
+                 limit_count: int = None,
                  db_conn: Any = None,
-                 logger: Logger = None) -> list[PySob] | None:
+                 logger: Logger = None) -> list[Sob] | None:
 
         # inicialize the return variable
-        result: list[PySob] | None = None
+        result: list[Sob] | None = None
 
         # obtain the invoking class
-        cls: Type[PySob] = PySob.__get_invoking_class()
+        cls: type[Sob] = PySob.__get_invoking_class()
 
         op_errors: list[str] = []
         recs: list[tuple[int | str]] = db_select(errors=op_errors,
                                                  sel_stmt=f"SELECT {PySob._db_specs[cls][1]} "
                                                           f"FROM {PySob._db_specs[cls][0]}",
                                                  where_data=where_data,
-                                                 min_count=1 if required else None,
+                                                 min_count=min_count,
+                                                 max_count=max_count,
+                                                 limit_count=limit_count,
                                                  connection=db_conn,
                                                  logger=logger)
         if not op_errors:
             # build the objects list
-            objs: list[PySob] = []
+            objs: list[Sob] = []
             for rec in recs:
                 # constructor of 'cls', a subclass of 'PySob', takes slightly different arguments
-                # noinspection PyArgumentList
                 objs.append(cls(rec[0],
                                 errors=op_errors,
                                 load_references=load_references,
@@ -431,7 +437,7 @@ class PySob:
               logger: Logger = None) -> int | None:
 
         # obtain the invoking class
-        cls: Type[PySob] = PySob.__get_invoking_class()
+        cls: type[Sob] = PySob.__get_invoking_class()
 
         # delete specified tuples
         op_errors: list[str] = []
@@ -450,7 +456,7 @@ class PySob:
         return result
 
     @staticmethod
-    def __get_invoking_class() -> Type[PySob]:
+    def __get_invoking_class() -> type[Sob]:
 
         # obtain the invoking function
         caller_frame: FrameInfo = stack()[1]
@@ -463,7 +469,7 @@ class PySob:
         pos_from: int = context.rfind(" ", 0, pos_to)
         mark = "." + context[pos_from+1:pos_to]
 
-        result: Type[PySob] | None = None
+        result: type[Sob] | None = None
         for cls in PySob._db_specs:
             name = f"{cls.__module__}.{cls.__qualname__}"
             if name.endswith(mark):
