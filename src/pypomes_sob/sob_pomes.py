@@ -391,21 +391,23 @@ class PySob:
         cls: Type[PySob] = PySob.__get_invoking_class()
 
         op_errors: list[str] = []
-        recs: list[tuple[int]] = db_select(errors=op_errors,
-                                           sel_stmt=f"SELECT {PySob._db_specs[cls][1]} "
-                                                    f"FROM {PySob._db_specs[cls][0]}",
-                                           where_data=where_data,
-                                           min_count=1 if required else None,
-                                           connection=db_conn,
-                                           logger=logger)
+        recs: list[tuple[int | str]] = db_select(errors=op_errors,
+                                                 sel_stmt=f"SELECT {PySob._db_specs[cls][1]} "
+                                                          f"FROM {PySob._db_specs[cls][0]}",
+                                                 where_data=where_data,
+                                                 min_count=1 if required else None,
+                                                 connection=db_conn,
+                                                 logger=logger)
         if not op_errors:
             # build the objects list
             objs: list[PySob] = []
             for rec in recs:
-                objs.append(cls(errors=op_errors,
+                # constructor of 'cls', a subclass of 'PySob', takes slightly different arguments
+                # noinspection PyArgumentList
+                objs.append(cls(rec[0],
+                                errors=op_errors,
                                 load_references=load_references,
                                 db_conn=db_conn,
-                                where_data={PySob._db_specs[cls][1]: rec[0]},
                                 logger=logger))
                 if op_errors:
                     break
