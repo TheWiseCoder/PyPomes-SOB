@@ -1,13 +1,22 @@
 from __future__ import annotations  # allow forward references
+import sys
+from importlib import import_module
 from inspect import FrameInfo, stack
 from enum import Enum, StrEnum
 from logging import Logger
-from pypomes_core import dict_get_key, dict_stringify
+from pathlib import Path
+from pypomes_core import dict_get_key, dict_stringify, exc_format
 from pypomes_db import (
     db_exists, db_count, db_select,
     db_insert, db_update, db_delete
 )
-from typing import Any, TypeVar
+from types import ModuleType
+from typing import Any, Type, TypeVar
+
+from .sob_config import (
+    SOB_BASE_FOLDER,
+    sob_db_specs, sob_attrs_map, sob_cls_references
+)
 
 # 'Sob' stands for all subclasses of 'PySob'
 Sob = TypeVar("Sob",
@@ -18,20 +27,6 @@ class PySob:
     """
     Root entity.
     """
-    # must have entries for all subclasses of 'PySob':
-    #   key: the class type of the subclass of 'PySob'
-    #   value: a tuple with 4 elements:
-    #     - the name of the entity's DB table
-    #     - the name of its PK attribute (maps to 'self.id')
-    #     - the type of its PK attribute (currently, 'int' and 'str' are supported)
-    #     - whether the PK attribute is an identity (has values generated automatically by the DB)
-    _db_specs: dict[type[Sob], (StrEnum | str, StrEnum | str, type, bool)] = {}
-
-    # maps input parameters to DB columns
-    _attrs_map: dict[type[Sob], dict[StrEnum | str, StrEnum | str]] = {}
-
-    # holds 'PySob' subclasses referred to by the current class
-    _sob_references: dict[type[Sob], list[type[Sob]]] = {}
 
     def __init__(self,
                  errors: list[str] = None,
@@ -48,9 +43,9 @@ class PySob:
         self._is_new: bool = True
 
         if where_data:
+            self.set(data=where_data)
             self.load(errors=errors,
-                      omit_nulls=True,
-                      where_data=where_data)
+                      omit_nulls=True)
         if not errors and load_references:
             self.__load_references(errors=errors,
                                    db_conn=db_conn)
@@ -62,30 +57,31 @@ class PySob:
         # prepara data for INSERT
         return_col: dict[str, type] | None = None
         insert_data: dict[str, Any] = self.to_columns(omit_nulls=True)
-        if PySob._db_specs[self.__class__][3]:
-            # PK is as identity column
-            insert_data.pop(PySob._db_specs[self.__class__][1], None)
-            return_col = {PySob._db_specs[self.__class__][1]: PySob._db_specs[self.__class__][2]}
+        class_name: str = f"{self.__class__.__module__}.{self.__class__.__qualname__}"
+        if sob_db_specs[class_name][3]:
+            # PK is an identity column
+            insert_data.pop(sob_db_specs[class_name][1], None)
+            return_col = {sob_db_specs[class_name][1]: sob_db_specs[class_name][2]}
 
         # execute the INSERT statement
         op_errors: list[str] = []
         rec: tuple[Any] = db_insert(errors=op_errors,
-                                    insert_stmt=f"INSERT INTO {PySob._db_specs[self.__class__][0]}",
+                                    insert_stmt=f"INSERT INTO {sob_db_specs[class_name][0]}",
                                     insert_data=insert_data,
                                     return_cols=return_col,
                                     connection=db_conn,
                                     logger=self._logger)
         if op_errors:
             msg = ("Error INSERTing into table "
-                   f"{PySob._db_specs[self.__class__][0]}: {'; '.join(op_errors)}")
+                   f"{sob_db_specs[class_name][0]}: {'; '.join(op_errors)}")
             if isinstance(errors, list):
                 errors.append(msg)
             if self._logger:
                 self._logger.error(msg=msg)
         else:
             self._is_new = False
-            if PySob._db_specs[self.__class__][3]:
-                # PK is as identity column
+            if sob_db_specs[class_name][3]:
+                # PK is an identity column
                 self.id = rec[0]
 
         return not op_errors
@@ -95,22 +91,23 @@ class PySob:
                db_conn: Any = None) -> bool:
 
         # prepare data for UPDATE
+        class_name: str = f"{self.__class__.__module__}.{self.__class__.__qualname__}"
         update_data: dict[str, Any] = self.to_columns(omit_nulls=False)
-        key: int = update_data.pop(PySob._db_specs[self.__class__][1])
+        key: int = update_data.pop(sob_db_specs[class_name][1])
 
         # execute the UPDATE statement
         op_errors: list[str] = []
         db_update(errors=op_errors,
-                  update_stmt=f"UPDATE {PySob._db_specs[self.__class__][0]}",
+                  update_stmt=f"UPDATE {sob_db_specs[class_name][0]}",
                   update_data=update_data,
-                  where_data={PySob._db_specs[self.__class__][1]: key},
+                  where_data={sob_db_specs[class_name][1]: key},
                   min_count=1,
                   max_count=1,
                   connection=db_conn,
                   logger=self._logger)
         if op_errors:
             msg: str = ("Error UPDATEing table "
-                        f"{PySob._db_specs[self.__class__][0]}: {'; '.join(op_errors)}")
+                        f"{sob_db_specs[class_name][0]}: {'; '.join(op_errors)}")
             if isinstance(errors, list):
                 errors.append(msg)
             if self._logger:
@@ -137,24 +134,25 @@ class PySob:
                errors: list[str] | None,
                db_conn: Any = None) -> int | None:
 
+        class_name: str = f"{self.__class__.__module__}.{self.__class__.__qualname__}"
         where_data: dict[str, Any]
         if self.id:
-            where_data = {PySob._db_specs[self.__class__][1]: self.id}
+            where_data = {sob_db_specs[class_name][1]: self.id}
         else:
             where_data = self.to_columns(omit_nulls=True)
-            where_data.pop(PySob._db_specs[self.__class__][1], None)
+            where_data.pop(sob_db_specs[class_name][1], None)
 
         # execute the DELETE statement
         op_errors: list[str] = []
         result: int = db_delete(errors=op_errors,
-                                delete_stmt=f"DELETE FROM {PySob._db_specs[self.__class__][0]}",
+                                delete_stmt=f"DELETE FROM {sob_db_specs[class_name][0]}",
                                 where_data=where_data,
                                 max_count=1,
                                 connection=db_conn,
                                 logger=self._logger)
         if op_errors:
             msg = ("Error DELETEing from table "
-                   f"{PySob._db_specs[self.__class__][0]}: {'; '.join(op_errors)}")
+                   f"{sob_db_specs[class_name][0]}: {'; '.join(op_errors)}")
             if isinstance(errors, list):
                 errors.append(msg)
             if self._logger:
@@ -172,8 +170,9 @@ class PySob:
     def set(self,
             data: dict[str, Any]) -> None:
 
+        class_name: str = f"{self.__class__.__module__}.{self.__class__.__qualname__}"
         for key, value in data.items():
-            attr: str = (PySob._attrs_map.get(self.__class__) or {}).get(key) or key
+            attr: str = (sob_attrs_map.get(class_name) or {}).get(key) or key
 
             # usa nomes de enums atribuídos como valores em 'data'
             if isinstance(value, Enum) and "use_names" in value.__class__:
@@ -183,50 +182,54 @@ class PySob:
                 self.__dict__[attr] = value
             elif self._logger:
                 self._logger.warning(msg=f"'{attr}'is not an attribute of "
-                                         f"{PySob._db_specs[self.__class__][0]}")
+                                         f"{sob_db_specs[class_name][0]}")
 
-    def in_db(self,
-              errors: list[str] | None,
-              where_data: dict[str, Any] = None,
-              db_conn: Any = None) -> bool | None:
+    def is_new(self,
+               errors: list[str] | None,
+               db_conn: Any = None) -> bool | None:
 
-        if not where_data:
-            if self.id:
-                # use object's ID
-                where_data = {PySob._db_specs[self.__class__][1]: self.id}
-            else:
-                # use object's available data
-                where_data = self.to_columns(omit_nulls=True)
-                where_data.pop(PySob._db_specs[self.__class__][1], None)
+        class_name: str = f"{self.__class__.__module__}.{self.__class__.__qualname__}"
+        where_data: dict[str, Any]
+        if self.id:
+            # use object's ID
+            where_data = {sob_db_specs[class_name][1]: self.id}
+        else:
+            # use object's available data
+            where_data = self.to_columns(omit_nulls=True)
+            where_data.pop(sob_db_specs[class_name][1], None)
 
-        return db_exists(errors=errors,
-                         table=PySob._db_specs[self.__class__][0],
-                         where_data=where_data,
-                         connection=db_conn,
-                         logger=self._logger)
+        result: bool = db_exists(errors=errors,
+                                 table=sob_db_specs[class_name][0],
+                                 where_data=where_data,
+                                 connection=db_conn,
+                                 logger=self._logger)
+        if not errors:
+            result = not result
+
+        return result
 
     def load(self,
              errors: list[str] | None,
              omit_nulls: bool,
-             where_data: dict[str, Any] = None,
              db_conn: Any = None) -> bool:
 
         # initialize the return variable
         result: bool = False
 
-        if not where_data:
-            if self.id:
-                where_data = {PySob._db_specs[self.__class__][1]: self.id}
-            else:
-                where_data = self.to_columns(omit_nulls=omit_nulls)
-                where_data.pop(PySob._db_specs[self.__class__][1], None)
+        class_name: str = f"{self.__class__.__module__}.{self.__class__.__qualname__}"
+        where_data: dict[str, Any]
+        if self.id:
+            where_data = {sob_db_specs[class_name][1]: self.id}
+        else:
+            where_data = self.to_columns(omit_nulls=omit_nulls)
+            where_data.pop(sob_db_specs[class_name][1], None)
 
         # loading the object from the database might fail
         attrs: list[str] = self.get_columns()
         op_errors: list[str] = []
         recs: list[tuple] = db_select(errors=op_errors,
                                       sel_stmt=f"SELECT {', '.join(attrs)} "
-                                               f"FROM {PySob._db_specs[self.__class__][0]}",
+                                               f"FROM {sob_db_specs[class_name][0]}",
                                       where_data=where_data,
                                       limit_count=2,
                                       connection=db_conn,
@@ -234,13 +237,13 @@ class PySob:
         msg: str | None = None
         if op_errors:
             msg = ("Error SELECTing from table "
-                   f"{PySob._db_specs[self.__class__][0]}: {'; '.join(op_errors)}")
+                   f"{sob_db_specs[class_name][0]}: {'; '.join(op_errors)}")
         elif not recs:
             msg = (f"No record found on table "
-                   f"{PySob._db_specs[self.__class__][0]} for {dict_stringify(where_data)}")
+                   f"{sob_db_specs[class_name][0]} for {dict_stringify(where_data)}")
         elif len(recs) > 1:
             msg = (f"More than on record found on table "
-                   f"{PySob._db_specs[self.__class__][0]} for {dict_stringify(where_data)}")
+                   f"{sob_db_specs[class_name][0]} for {dict_stringify(where_data)}")
 
         if msg:
             if isinstance(errors, list):
@@ -251,7 +254,7 @@ class PySob:
             rec: tuple = recs[0]
             for inx, attr in enumerate(attrs):
                 # PK attribute in DB table might have a different name
-                if attr == PySob._db_specs[self.__class__][0]:
+                if attr == sob_db_specs[class_name][0]:
                     self.__dict__["id"] = rec[inx]
                 else:
                     self.__dict__[attr] = rec[inx]
@@ -262,8 +265,9 @@ class PySob:
 
     def get_columns(self) -> list[str]:
 
+        class_name: str = f"{self.__class__.__module__}.{self.__class__.__qualname__}"
         # PK attribute in DB table might have a different name
-        result: list[str] = [PySob._db_specs[self.__class__][1]]
+        result: list[str] = [sob_db_specs[class_name][1]]
         result.extend([k for k in self.__dict__
                       if k.islower() and not k.startswith("_") and not k == "id"])
         return result
@@ -271,8 +275,9 @@ class PySob:
     def to_columns(self,
                    omit_nulls: bool) -> dict[str, Any]:
 
+        class_name: str = f"{self.__class__.__module__}.{self.__class__.__qualname__}"
         # PK attribute in DB table might have a different name
-        result: dict[str, Any] = {PySob._db_specs[self.__class__][1]: self.__dict__.get("id")}
+        result: dict[str, Any] = {sob_db_specs[class_name][1]: self.__dict__.get("id")}
         result.update({k: v for k, v in self.__dict__.items()
                       if k.islower() and not (k.startswith("_") or k == "id" or (omit_nulls and v is None))})
         return result
@@ -287,21 +292,24 @@ class PySob:
                        data: dict[str, Any],
                        omit_nulls: bool) -> dict[str, Any]:
 
+        # initialize the return variable
         result: dict[str, Any] = {}
+        
+        class_name: str = f"{self.__class__.__module__}.{self.__class__.__qualname__}"
         for k, v in data.items():
             if not omit_nulls or v is not None:
-                attr: str = dict_get_key(source=PySob._attrs_map.get(self.__class__) or {},
+                attr: str = dict_get_key(source=sob_attrs_map.get(class_name) or {},
                                          value=k) or k
                 result[attr] = v
 
         return result
 
-    # noinspection PyMethodMayBeStatic, PyUnusedLocal
+    # noinspection PyUnusedLocal
     def load_reference(self,
                        __cls: type[Sob],
                        /,
                        errors: list[str] | None,
-                       db_conn: Any | None) -> Sob | list[Sob] | None:  # noqa: ARG002
+                       db_conn: Any | None) -> Sob | list[Sob] | None:
 
         # must be implemented by subclasses containing references
         msg: str = f"Subclass {__cls.__module__}.{__cls.__qualname__} failed to implement 'load_reference()'"
@@ -317,13 +325,19 @@ class PySob:
                           db_conn: Any) -> None:
 
         op_errors: list[str] = []
-        for cls in (PySob._sob_references.get(self.__class__) or []):
+        class_name: str = f"{self.__class__.__module__}.{self.__class__.__qualname__}"
+        for name in (sob_cls_references.get(class_name) or []):
+            pos: int = name.rfind(".")
+            module_name: str = name[:pos]
+            module: ModuleType = import_module(name=module_name)
+            cls: type[Sob] = getattr(module,
+                                     name)
             self.load_reference(cls,
                                 errors=op_errors,
                                 db_conn=db_conn)
             if op_errors:
                 msg = (f"Error SELECTing from table "
-                       f"{PySob._db_specs[cls][0]}: {'; '.join(op_errors)}")
+                       f"{sob_db_specs[name][0]}: {'; '.join(op_errors)}")
                 if isinstance(errors, list):
                     errors.append(msg)
                 if self._logger:
@@ -331,23 +345,34 @@ class PySob:
                 break
 
     @staticmethod
-    def initialize(__cls: type[Sob],
-                   /,
-                   db_specs: tuple[StrEnum | str, StrEnum | str, int | str] |
+    # HAZARD:
+    #   1. because 'typings.Type' has been deprecated, 'type' should be used here
+    #   2. 'Sob' stands for all subclasses of 'PySob', and thus 'type[Sob]' should suffice
+    #   3. PyCharm's code inspector, however, takes 'type[Sob]' to mean strict 'PySob' class
+    #   4. thus, a fallback to 'Type[PySub]' was necessary
+    def initialize(db_specs: tuple[StrEnum | str, StrEnum | str, int | str] |
                              tuple[StrEnum | str, StrEnum | str, int, bool],  # noqa
                    attrs_map: dict[StrEnum | str, StrEnum | str] = None,
-                   sob_references: list[type[Sob]] = None) -> None:
+                   sob_references: list[Type[PySob]] = None,
+                   logger: Logger = None) -> None:
 
-        # initialize the class
-        specs: list = list(db_specs)
-        if len(specs) == 3:
-            # 'id' defaults to being an identity attribute in the DB for type 'int'
-            specs.append(specs[2] is int)
-        PySob._db_specs.update({__cls: tuple(specs)})
-        if attrs_map:
-            PySob._attrs_map.update({__cls: attrs_map})
-        if sob_references:
-            PySob._sob_references.update({__cls: sob_references})
+        # obtain the invoking class
+        op_errors: list[str] = []
+        cls: type[Sob] = PySob.__get_invoking_class(errors=op_errors,
+                                                    logger=logger)
+        # initialize its data
+        if cls:
+            name: str = f"{cls.__module__}.{cls.__qualname__}"
+            if len(db_specs) == 3:
+                # 'id' defaults to being an identity attribute in the DB for type 'int'
+                db_specs += (db_specs[2] is int,)
+            sob_db_specs.update({name: db_specs})
+            if attrs_map:
+                sob_attrs_map.update({name: attrs_map})
+            if sob_references:
+                sob_cls_references.update({name: sob_references})
+            if logger:
+                logger.debug(msg=f"Inicialized access data for class '{name}'")
 
     @staticmethod
     def count(errors: list[str] | None,
@@ -355,14 +380,21 @@ class PySob:
               db_conn: Any = None,
               logger: Logger = None) -> int | None:
 
-        # obtain the invoking class
-        cls: type[Sob] = PySob.__get_invoking_class()
+        # inicialize the return variable
+        result: int | None = None
 
-        return db_count(errors=errors,
-                        table=PySob._db_specs[cls][0],
-                        where_data=where_data,
-                        connection=db_conn,
-                        logger=logger)
+        # obtain the invoking class
+        op_errors: list[str] = []
+        cls: type[Sob] = PySob.__get_invoking_class(errors=op_errors,
+                                                    logger=logger)
+        if not op_errors:
+            name: str = f"{cls.__module__}.{cls.__qualname__}"
+            result = db_count(errors=errors,
+                              table=sob_db_specs[name][0],
+                              where_data=where_data,
+                              connection=db_conn,
+                              logger=logger)
+        return result
 
     @staticmethod
     def exists(errors: list[str] | None,
@@ -370,14 +402,28 @@ class PySob:
                db_conn: Any = None,
                logger: Logger = None) -> int | None:
 
-        # obtain the invoking class
-        cls: type[Sob] = PySob.__get_invoking_class()
+        # inicialize the return variable
+        result: bool | None = None
 
-        return db_exists(errors=errors,
-                         table=PySob._db_specs[cls][0],
-                         where_data=where_data,
-                         connection=db_conn,
-                         logger=logger)
+        # obtain the invoking class
+        op_errors: list[str] = []
+        cls: type[Sob] = PySob.__get_invoking_class(errors=op_errors,
+                                                    logger=logger)
+        if not op_errors:
+            name: str = f"{cls.__module__}.{cls.__qualname__}"
+            result = db_exists(errors=errors,
+                               table=sob_db_specs[name][0],
+                               where_data=where_data,
+                               connection=db_conn,
+                               logger=logger)
+        if op_errors:
+            msg = "; ".join(op_errors)
+            if isinstance(errors, list):
+                errors.append(msg)
+            if logger:
+                logger.error(msg=msg)
+
+        return result
 
     @staticmethod
     def retrieve(errors: list[str] | None,
@@ -393,33 +439,35 @@ class PySob:
         result: list[Sob] | None = None
 
         # obtain the invoking class
-        cls: type[Sob] = PySob.__get_invoking_class()
-
         op_errors: list[str] = []
-        recs: list[tuple[int | str]] = db_select(errors=op_errors,
-                                                 sel_stmt=f"SELECT {PySob._db_specs[cls][1]} "
-                                                          f"FROM {PySob._db_specs[cls][0]}",
-                                                 where_data=where_data,
-                                                 min_count=min_count,
-                                                 max_count=max_count,
-                                                 limit_count=limit_count,
-                                                 connection=db_conn,
-                                                 logger=logger)
+        cls: type[Sob] = PySob.__get_invoking_class(errors=op_errors,
+                                                    logger=logger)
         if not op_errors:
-            # build the objects list
-            objs: list[Sob] = []
-            for rec in recs:
-                # constructor of 'cls', a subclass of 'PySob', takes slightly different arguments
-                objs.append(cls(rec[0],
-                                errors=op_errors,
-                                load_references=load_references,
-                                db_conn=db_conn,
-                                logger=logger))
-                if op_errors:
-                    break
-
+            name: str = f"{cls.__module__}.{cls.__qualname__}"
+            recs: list[tuple[int | str]] = db_select(errors=op_errors,
+                                                     sel_stmt=f"SELECT {sob_db_specs[name][1]} "
+                                                              f"FROM {sob_db_specs[name][0]}",
+                                                     where_data=where_data,
+                                                     min_count=min_count,
+                                                     max_count=max_count,
+                                                     limit_count=limit_count,
+                                                     connection=db_conn,
+                                                     logger=logger)
             if not op_errors:
-                result = objs
+                # build the objects list
+                objs: list[Sob] = []
+                for rec in recs:
+                    # constructor of 'cls', a subclass of 'PySob', takes slightly different arguments
+                    objs.append(cls(rec[0],
+                                    errors=op_errors,
+                                    load_references=load_references,
+                                    db_conn=db_conn,
+                                    logger=logger))
+                    if op_errors:
+                        break
+
+                if not op_errors:
+                    result = objs
 
         if op_errors:
             msg = "; ".join(op_errors)
@@ -436,16 +484,21 @@ class PySob:
               db_conn: Any = None,
               logger: Logger = None) -> int | None:
 
-        # obtain the invoking class
-        cls: type[Sob] = PySob.__get_invoking_class()
+        # initialize the return variable
+        result: int | None = None
 
-        # delete specified tuples
+        # obtain the invoking class
         op_errors: list[str] = []
-        result: int = db_delete(errors=op_errors,
-                                delete_stmt=f"DELETE FROM {PySob._db_specs[cls][0]}",
-                                where_data=where_data,
-                                connection=db_conn,
-                                logger=logger)
+        cls: type[Sob] = PySob.__get_invoking_class(errors=op_errors,
+                                                    logger=logger)
+        # delete specified tuples
+        if not op_errors:
+            name: str = f"{cls.__module__}.{cls.__qualname__}"
+            result: int = db_delete(errors=op_errors,
+                                    delete_stmt=f"DELETE FROM {sob_db_specs[name][0]}",
+                                    where_data=where_data,
+                                    connection=db_conn,
+                                    logger=logger)
         if op_errors:
             msg = "; ".join(op_errors)
             if isinstance(errors, list):
@@ -456,24 +509,60 @@ class PySob:
         return result
 
     @staticmethod
-    def __get_invoking_class() -> type[Sob]:
+    def __get_invoking_class(errors: list[str] = None,
+                             logger: Logger = None) -> type[Sob] | None:
+
+        # initialize the return variable
+        result: type[Sob] | None = None
 
         # obtain the invoking function
         caller_frame: FrameInfo = stack()[1]
-        mark: str = f".{caller_frame.function}("
+        invoking_function: str = caller_frame.function
+        mark: str = f".{invoking_function}("
 
-        # obtain the invoking class
+        # obtain the invoking class and its filepath
         caller_frame = stack()[2]
         context: str = caller_frame.code_context[0]
         pos_to: int = context.find(mark)
-        pos_from: int = context.rfind(" ", 0, pos_to)
-        mark = "." + context[pos_from+1:pos_to]
+        pos_from: int = context.rfind(" ", 0, pos_to) + 1
+        classname: str = context[pos_from:pos_to]
+        filepath: Path = Path(caller_frame.filename)
+        mark = "." + classname
 
-        result: type[Sob] | None = None
-        for cls in PySob._db_specs:
-            name = f"{cls.__module__}.{cls.__qualname__}"
+        for name in sob_db_specs:
             if name.endswith(mark):
-                result = cls
+                try:
+                    pos: int = name.rfind(".")
+                    module_name: str = name[:pos]
+                    module: ModuleType = import_module(name=module_name)
+                    result = getattr(module,
+                                     classname)
+                except Exception as e:
+                    if logger:
+                        msg: str = exc_format(exc=e,
+                                              exc_info=sys.exc_info())
+                        logger.warning(msg=msg)
                 break
+
+        if not result and SOB_BASE_FOLDER:
+            try:
+                pos: int = filepath.parts.index(SOB_BASE_FOLDER)
+                module_name: str = Path(*filepath.parts[pos:]).as_posix()[:-3].replace("/", ".")
+                module: ModuleType = import_module(name=module_name)
+                result = getattr(module,
+                                 classname)
+            except Exception as e:
+                if logger:
+                    msg: str = exc_format(exc=e,
+                                          exc_info=sys.exc_info())
+                    logger.warning(msg=msg)
+
+        if not result:
+            msg: str = (f"Unable to obtain class '{classname}', "
+                        f"filepath '{filepath}', "f"from invoking function '{invoking_function}'")
+            if logger:
+                logger.error(msg=f"{msg} - invocation frame {caller_frame}")
+            if isinstance(errors, list):
+                errors.append(msg)
 
         return result
