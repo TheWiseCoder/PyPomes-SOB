@@ -2,7 +2,7 @@ from __future__ import annotations  # allow forward references
 import sys
 from importlib import import_module
 from inspect import FrameInfo, stack
-from enum import Enum, StrEnum
+from enum import Enum
 from logging import Logger
 from pathlib import Path
 from pypomes_core import dict_get_key, dict_stringify, exc_format
@@ -15,7 +15,8 @@ from typing import Any, Type, TypeVar
 
 from .sob_config import (
     SOB_BASE_FOLDER,
-    sob_db_specs, sob_attrs_map, sob_cls_references
+    sob_db_specs, sob_attrs_map,
+    sob_attrs_unique, sob_cls_references
 )
 
 # 'Sob' stands for all subclasses of 'PySob'
@@ -37,9 +38,9 @@ class PySob:
 
         self._logger: Logger = logger
         # maps to the entity's PK in its DB table (returned on INSERT operations)
-        self.id: int | str = 0
+        self.id: int | str | None = None
 
-        # determine whether the instance exists in the database
+        # determine whether this instance exists in the database
         self._is_new: bool = True
 
         if where_data:
@@ -174,7 +175,7 @@ class PySob:
         for key, value in data.items():
             attr: str = (sob_attrs_map.get(class_name) or {}).get(key) or key
 
-            # usa nomes de enums atribuídos como valores em 'data'
+            # use enum names assigned as values in 'data'
             if isinstance(value, Enum) and "use_names" in value.__class__:
                 value = value.name  # noqa: PLW2901
 
@@ -184,29 +185,41 @@ class PySob:
                 self._logger.warning(msg=f"'{attr}'is not an attribute of "
                                          f"{sob_db_specs[class_name][0]}")
 
-    def is_new(self,
-               errors: list[str] | None,
-               db_conn: Any = None) -> bool | None:
+    def is_new(self) -> bool:
+
+        return self._is_new
+
+    def is_in_db(self,
+                 errors: list[str] | None,
+                 db_conn: Any = None) -> bool | None:
 
         class_name: str = f"{self.__class__.__module__}.{self.__class__.__qualname__}"
-        where_data: dict[str, Any]
+        where_data: dict[str, Any] | None = None
         if self.id:
             # use object's ID
             where_data = {sob_db_specs[class_name][1]: self.id}
-        else:
+        elif sob_attrs_unique[class_name]:
+            # use first set of unique attributes with non-null values found
+            for attr_set in sob_attrs_unique[class_name]:
+                attrs_unique: dict[str, Any] = {}
+                for attr in attr_set:
+                    val: Any = self.__dict__.get(attr)
+                    if val is not None:
+                        attrs_unique[attr] = val
+                if len(attrs_unique) == len(sob_attrs_unique[class_name]):
+                    where_data = attrs_unique
+                    break
+
+        if not where_data:
             # use object's available data
             where_data = self.to_columns(omit_nulls=True)
             where_data.pop(sob_db_specs[class_name][1], None)
 
-        result: bool = db_exists(errors=errors,
-                                 table=sob_db_specs[class_name][0],
-                                 where_data=where_data,
-                                 connection=db_conn,
-                                 logger=self._logger)
-        if not errors:
-            result = not result
-
-        return result
+        return db_exists(errors=errors,
+                         table=sob_db_specs[class_name][0],
+                         where_data=where_data,
+                         connection=db_conn,
+                         logger=self._logger)
 
     def load(self,
              errors: list[str] | None,
@@ -350,9 +363,10 @@ class PySob:
     #   2. 'Sob' stands for all subclasses of 'PySob', and thus 'type[Sob]' should suffice
     #   3. PyCharm's code inspector, however, takes 'type[Sob]' to mean strict 'PySob' class
     #   4. thus, a fallback to 'Type[PySub]' was necessary
-    def initialize(db_specs: tuple[StrEnum | str, StrEnum | str, int | str] |
-                             tuple[StrEnum | str, StrEnum | str, int, bool],  # noqa
-                   attrs_map: dict[StrEnum | str, StrEnum | str] = None,
+    def initialize(db_specs: tuple[str, str, int | str] |
+                             tuple[str,  str, int, bool],  # noqa
+                   attrs_map: dict[str, str] = None,
+                   attrs_unique: list[tuple[str]] = None,
                    sob_references: list[Type[PySob]] = None,
                    logger: Logger = None) -> None:
 
@@ -369,6 +383,8 @@ class PySob:
             sob_db_specs.update({name: db_specs})
             if attrs_map:
                 sob_attrs_map.update({name: attrs_map})
+            if attrs_unique:
+                sob_attrs_unique.update({name: attrs_unique})
             if sob_references:
                 sob_cls_references.update({name: sob_references})
             if logger:
@@ -427,10 +443,14 @@ class PySob:
 
     @staticmethod
     def retrieve(errors: list[str] | None,
-                 where_data: dict[str, Any] = None,
                  load_references: bool = False,
+                 where_clause: str = None,
+                 where_vals: str = None,
+                 where_data: dict[str, Any] = None,
+                 order_by_clause: str = None,
                  min_count: int = None,
                  max_count: int = None,
+                 offset_count: int = None,
                  limit_count: int = None,
                  db_conn: Any = None,
                  logger: Logger = None) -> list[Sob] | None:
@@ -447,9 +467,13 @@ class PySob:
             recs: list[tuple[int | str]] = db_select(errors=op_errors,
                                                      sel_stmt=f"SELECT {sob_db_specs[name][1]} "
                                                               f"FROM {sob_db_specs[name][0]}",
+                                                     where_clause=where_clause,
+                                                     where_vals=where_vals,
                                                      where_data=where_data,
+                                                     orderby_clause=order_by_clause,
                                                      min_count=min_count,
                                                      max_count=max_count,
+                                                     offset_count=offset_count,
                                                      limit_count=limit_count,
                                                      connection=db_conn,
                                                      logger=logger)
