@@ -1,7 +1,7 @@
-from .sob_pomes import PySob
+from .sob_pomes import PySob, Sob
 
 __all__ = [
-    "PySob"
+    "PySob", "Sob"
 ]
 
 from importlib.metadata import version
