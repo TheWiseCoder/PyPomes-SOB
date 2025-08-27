@@ -54,16 +54,11 @@ class PySob:
 
         if where_data:
             self.set(data=where_data)
-            self.load(omit_nulls=True,
+            self.load(__references,
+                      omit_nulls=True,
                       db_engine=db_engine,
                       db_conn=db_conn,
                       errors=errors)
-
-        if not errors and __references:
-            self.load_references(__references,
-                                 db_engine=db_engine,
-                                 db_conn=db_conn,
-                                 errors=errors)
 
     def insert(self,
                db_engine: DbEngine = None,
@@ -266,6 +261,8 @@ class PySob:
         return result
 
     def load(self,
+             __references: list[type] = None,
+             /,
              omit_nulls: bool = True,
              db_engine: DbEngine = None,
              db_conn: Any = None,
@@ -322,7 +319,12 @@ class PySob:
                 else:
                     self.__dict__[attr] = rec[inx]
             self._is_new = False
-            result = True
+            if __references:
+                self.load_references(__references,
+                                     db_engine=db_engine,
+                                     db_conn=db_conn,
+                                     errors=errors)
+            result = not errors
 
         return result
 
