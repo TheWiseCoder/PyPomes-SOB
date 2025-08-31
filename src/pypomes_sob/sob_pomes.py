@@ -8,7 +8,7 @@ from inspect import FrameInfo, stack
 from enum import Enum
 from logging import Logger
 from pathlib import Path
-from pypomes_core import dict_get_key, dict_stringify, exc_format
+from pypomes_core import dict_stringify, exc_format
 from pypomes_db import (
     DbEngine, db_exists, db_count,
     db_select, db_insert, db_update, db_delete
@@ -18,8 +18,7 @@ from typing import Any, TypeVar
 
 from .sob_config import (
     SOB_BASE_FOLDER, SOB_MAX_THREADS,
-    sob_db_specs, sob_col_names,
-    sob_attrs_map, sob_attrs_unique
+    sob_db_specs, sob_col_names, sob_attrs_unique
 )
 
 # 'Sob' stands for all subclasses of 'PySob'
@@ -33,7 +32,7 @@ class PySob:
     """
 
     def __init__(self,
-                 __references: list[type] = None,
+                 __references: type[Sob | list[Sob]] | list[type[Sob | list[Sob]]] = None,
                  /,
                  where_data: dict[str, Any] = None,
                  db_engine: DbEngine = None,
@@ -204,16 +203,13 @@ class PySob:
         cls_name: str = f"{self.__class__.__module__}.{self.__class__.__qualname__}"
         tbl_name = sob_db_specs[cls_name][0]
         for key, value in data.items():
-            attr: str = (sob_attrs_map.get(cls_name) or {}).get(key) or key
-
-            # use enum names assigned as values in 'data'
             if isinstance(value, Enum) and "use_names" in value.__class__:
+                # use enum names assigned as values in 'data'
                 value = value.name  # noqa: PLW2901
-
-            if attr in self.__dict__:
-                self.__dict__[attr] = value
+            if key in self.__dict__:
+                self.__dict__[key] = value
             elif self._logger:
-                self._logger.warning(msg=f"'{attr}'is not an attribute of {tbl_name}")
+                self._logger.warning(msg=f"'{key}' is not an attribute of {tbl_name}")
 
     def is_new(self) -> bool:
 
@@ -261,7 +257,7 @@ class PySob:
         return result
 
     def load(self,
-             __references: list[type] = None,
+             __references: type[Sob | list[Sob]] | list[type[Sob | list[Sob]]] = None,
              /,
              omit_nulls: bool = True,
              db_engine: DbEngine = None,
@@ -320,10 +316,11 @@ class PySob:
                     self.__dict__[attr] = rec[inx]
             self._is_new = False
             if __references:
-                self.load_references(__references,
-                                     db_engine=db_engine,
-                                     db_conn=db_conn,
-                                     errors=errors)
+                PySob.__load_references(__references,
+                                        objs=[self],
+                                        db_engine=db_engine,
+                                        db_conn=db_conn,
+                                        errors=errors)
             result = not errors
 
         return result
@@ -338,50 +335,18 @@ class PySob:
                    omit_nulls: bool) -> dict[str, Any]:
 
         cls_name: str = f"{self.__class__.__module__}.{self.__class__.__qualname__}"
-        pk_name: str = sob_col_names[cls_name][0]
+        result: dict[str, Any] = {}
         # PK attribute in DB table might have a different name
-        result: dict[str, Any] = {pk_name: self.__dict__.get("id")}
+        if not (omit_nulls and self.id is None):
+            pk_name: str = sob_col_names[cls_name][0]
+            result[pk_name] = self.id
         result.update({k: v for k, v in self.__dict__.items()
                       if k.islower() and not (k.startswith("_") or k == "id" or (omit_nulls and v is None))})
         return result
 
-    def to_params(self,
-                  omit_nulls: bool) -> dict[str, Any]:
-
-        return self.data_to_params(data=self.__dict__,
-                                   omit_nulls=omit_nulls)
-
-    def data_to_params(self,
-                       data: dict[str, Any],
-                       omit_nulls: bool) -> dict[str, Any]:
-
-        # initialize the return variable
-        result: dict[str, Any] = {}
-        
-        cls_name: str = f"{self.__class__.__module__}.{self.__class__.__qualname__}"
-        for k, v in data.items():
-            if not omit_nulls or v is not None:
-                attr: str = dict_get_key(source=sob_attrs_map.get(cls_name) or {},
-                                         value=k) or k
-                result[attr] = v
-
-        return result
-
-    def load_reference(self,
-                       __reference: type,
-                       /,
-                       db_engine: DbEngine = None,
-                       db_conn: Any = None,
-                       errors: list[str] = None) -> None:
-
-        self.load_references([__reference],
-                             db_engine=db_engine,
-                             db_conn=db_conn,
-                             errors=errors)
-
     # noinspection PyUnusedLocal
     def load_references(self,
-                        __references: list[type],
+                        __references: type[Sob | list[Sob]] | list[type[Sob | list[Sob]]],
                         /,
                         db_engine: DbEngine = None,
                         db_conn: Any = None,
@@ -395,10 +360,25 @@ class PySob:
         if self._logger:
             self._logger.error(msg=msg)
 
+    # noinspection PyUnusedLocal
+    def invalidate_references(self,
+                              __references: type[Sob | list[Sob]] | list[type[Sob | list[Sob]]],
+                              /,
+                              db_engine: DbEngine = None,
+                              db_conn: Any = None,
+                              errors: list[str] = None) -> None:
+
+        # must be implemented by subclasses containing references
+        msg: str = (f"Subclass {self.__class__.__module__}.{self.__class__.__qualname__} "
+                    "failed to implement 'invalidate_references()'")
+        if isinstance(errors, list):
+            errors.append(msg)
+        if self._logger:
+            self._logger.error(msg=msg)
+
     @staticmethod
     def initialize(db_specs: tuple[type[StrEnum] | list[str], int | str] |
                              tuple[type[StrEnum] | list[str], int, bool],  # noqa
-                   attrs_map: dict[str, str] = None,
                    attrs_unique: list[tuple[str]] = None,
                    logger: Logger = None) -> None:
 
@@ -422,10 +402,6 @@ class PySob:
                 # PK defaults to being an identity attribute in the DB for type 'int'
                 db_specs += (db_specs[1] is int,)
             sob_db_specs.update({cls_name: (tbl_name, db_specs[1], db_specs[2])})
-
-            # register the mapping of input parameters to DB columns
-            if attrs_map:
-                sob_attrs_map.update({cls_name: attrs_map})
 
             # register the sets of unique attributes
             if attrs_unique:
@@ -523,7 +499,7 @@ class PySob:
         return result
 
     @staticmethod
-    def retrieve(__references: list[type] = None,
+    def retrieve(__references: type[Sob | list[Sob]] | list[type[Sob | list[Sob]]] = None,
                  /,
                  table_alias: str = None,
                  table_joins: str = None,
@@ -594,30 +570,11 @@ class PySob:
                     objs.append(sob)
 
                 if __references:
-                    if SOB_MAX_THREADS > 1:
-                        task_futures: list[Future] = []
-                        with ThreadPoolExecutor(max_workers=SOB_MAX_THREADS) as executor:
-                            for obj in objs:
-                                # HAZARD: must not use 'db_conn' concurrently
-                                future: Future = executor.submit(obj.load_references,
-                                                                 __references,
-                                                                 # db_conn=db_conn,
-                                                                 db_engine=db_engine,
-                                                                 errors=errors)
-                                task_futures.append(future)
-
-                        # wait for all task futures to complete, then shutdown down the executor
-                        futures.wait(fs=task_futures)
-                        executor.shutdown(wait=False)
-
-                    else:
-                        for obj in objs:
-                            obj.load_references(__references,
-                                                db_engine=db_engine,
-                                                db_conn=db_conn,
-                                                errors=errors)
-                            if errors:
-                                break
+                    PySob.__load_references(__references,
+                                            objs=objs,
+                                            db_engine=db_engine,
+                                            db_conn=db_conn,
+                                            errors=errors)
                 if not errors:
                     result = objs
 
@@ -627,13 +584,13 @@ class PySob:
         return result
 
     @staticmethod
-    def include(insert_data: dict[str, Any] = None,
-                return_cols: dict[str, Any] = None,
-                db_engine: DbEngine = None,
-                db_conn: Any = None,
-                committable: bool = None,
-                errors: list[str] = None,
-                logger: Logger = None) -> tuple | int | None:
+    def store(insert_data: dict[str, Any] = None,
+              return_cols: dict[str, Any] = None,
+              db_engine: DbEngine = None,
+              db_conn: Any = None,
+              committable: bool = None,
+              errors: list[str] = None,
+              logger: Logger = None) -> tuple | int | None:
 
         # initialize the return variable
         result: tuple | int | None = None
@@ -762,3 +719,40 @@ class PySob:
                 errors.append(msg)
 
         return result
+
+    @staticmethod
+    def __load_references(__references:  type[Sob | list[Sob]] | list[type[Sob | list[Sob]]],
+                          /,
+                          objs: list[Sob],
+                          db_engine: DbEngine | None,
+                          db_conn: Any | None,
+                          errors: list[str]) -> None:
+
+        if SOB_MAX_THREADS > 1 and \
+                (len(objs) > 1 or (isinstance(__references, list) and len(__references) > 1)):
+            task_futures: list[Future] = []
+            with ThreadPoolExecutor(max_workers=SOB_MAX_THREADS) as executor:
+                for obj in objs:
+                    for reference in __references if isinstance(__references, list) else [__references]:
+                        # must not multiplex 'db_conn'
+                        future: Future = executor.submit(obj.load_references,
+                                                         reference,
+                                                         db_engine=db_engine,
+                                                         errors=errors)
+                        if errors:
+                            break
+                        task_futures.append(future)
+                    if errors:
+                        break
+
+            # wait for all task futures to complete, then shutdown down the executor
+            futures.wait(fs=task_futures)
+            executor.shutdown(wait=False)
+        else:
+            for obj in objs:
+                obj.load_references(__references,
+                                    db_engine=db_engine,
+                                    db_conn=db_conn,
+                                    errors=errors)
+                if errors:
+                    break

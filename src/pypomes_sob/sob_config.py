@@ -23,8 +23,5 @@ sob_db_specs: dict[str, (str, type, bool)] = {}
 #           the first element is the name of its PK attribute (maps to 'self.id')
 sob_col_names: dict[str, tuple] = {}
 
-# maps input parameters to DB columns
-sob_attrs_map: dict[str, dict[str, str]] = {}
-
 # holds sets of unique attributes
 sob_attrs_unique: dict[str, list[tuple[str]]] = {}
