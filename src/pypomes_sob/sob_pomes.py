@@ -8,7 +8,7 @@ from inspect import FrameInfo, stack
 from enum import Enum
 from logging import Logger
 from pathlib import Path
-from pypomes_core import dict_stringify, exc_format
+from pypomes_core import dict_clone, dict_stringify, exc_format
 from pypomes_db import (
     DbEngine, db_exists, db_count,
     db_select, db_insert, db_update, db_delete
@@ -18,7 +18,7 @@ from typing import Any, TypeVar
 
 from .sob_config import (
     SOB_BASE_FOLDER, SOB_MAX_THREADS,
-    sob_db_specs, sob_col_names, sob_attrs_unique
+    sob_db_specs, sob_col_names, sob_attrs_input, sob_attrs_unique
 )
 
 # 'Sob' stands for all subclasses of 'PySob'
@@ -67,7 +67,7 @@ class PySob:
 
         # prepare data for INSERT
         return_col: dict[str, type] | None = None
-        insert_data: dict[str, Any] = self.to_columns(omit_nulls=True)
+        insert_data: dict[str, Any] = self.get()
         cls_name: str = f"{self.__class__.__module__}.{self.__class__.__qualname__}"
         is_identity: bool = sob_db_specs[cls_name][2]
         if is_identity:
@@ -109,7 +109,7 @@ class PySob:
 
         # prepare data for UPDATE
         cls_name: str = f"{self.__class__.__module__}.{self.__class__.__qualname__}"
-        update_data: dict[str, Any] = self.to_columns(omit_nulls=False)
+        update_data: dict[str, Any] = self.get(omit_nulls=False)
         tbl_name: str = sob_db_specs[cls_name][0]
         pk_name = sob_col_names[cls_name][0]
         key: int | str = update_data.pop(pk_name)
@@ -169,7 +169,7 @@ class PySob:
         if self.id:
             where_data = {pk_name: self.id}
         else:
-            where_data = self.to_columns(omit_nulls=True)
+            where_data = self.get()
             where_data.pop(pk_name, None)
 
         # make sure to have an errors list
@@ -197,6 +197,21 @@ class PySob:
         for key in self.__dict__:
             self.__dict__[key] = None
 
+    def get(self,
+            omit_nulls: bool = True) -> dict[str, Any]:
+
+        # initialize the return variable
+        result: dict[str, Any] = {}
+
+        cls_name: str = f"{self.__class__.__module__}.{self.__class__.__qualname__}"
+        if not (omit_nulls and self.id is None):
+            # PK attribute in DB table might have a different name
+            pk_name: str = sob_col_names[cls_name][0]
+            result[pk_name] = self.id
+        result.update({k: v for k, v in self.__dict__.items()
+                      if k.islower() and not (k.startswith("_") or k == "id" or (omit_nulls and v is None))})
+        return result
+
     def set(self,
             data: dict[str, Any]) -> None:
 
@@ -210,6 +225,22 @@ class PySob:
                 self.__dict__[key] = value
             elif self._logger:
                 self._logger.warning(msg=f"'{key}' is not an attribute of {tbl_name}")
+
+    def get_inputs(self) -> dict[str, Any] | None:
+
+        # initialize the return variable
+        result: dict[str, Any] | None = None
+
+        # obtain the mapping of input names to attributes
+        cls_name: str = f"{self.__class__.__module__}.{self.__class__.__qualname__}"
+        mapping: list[tuple[str, str]] = sob_attrs_input.get(cls_name)
+        if mapping:
+            # obtain the instance's non-null data
+            data: dict[str, Any] = self.get()
+            if data:
+                result = dict_clone(source=data,
+                                    from_to_keys=[(t[1], t[0]) for t in mapping if t[1]])
+        return result
 
     def is_new(self) -> bool:
 
@@ -244,7 +275,7 @@ class PySob:
 
         if not where_data:
             # use object's available data
-            where_data = self.to_columns(omit_nulls=True)
+            where_data = self.get()
             where_data.pop(pk_name, None)
 
         if not where_data:
@@ -274,7 +305,7 @@ class PySob:
         if self.id:
             where_data = {pk_name: self.id}
         else:
-            where_data = self.to_columns(omit_nulls=omit_nulls)
+            where_data = self.get(omit_nulls=omit_nulls)
             where_data.pop(pk_name, None)
 
         # make sure to have an errors list
@@ -327,22 +358,9 @@ class PySob:
 
     def get_columns(self) -> list[str]:
 
-        # PK attribute in DB table might have a different : list[str] = []
+        # PK attribute in DB table might have a different name
         return [k for k in self.__dict__
                 if k.islower() and not k.startswith("_")]
-
-    def to_columns(self,
-                   omit_nulls: bool) -> dict[str, Any]:
-
-        cls_name: str = f"{self.__class__.__module__}.{self.__class__.__qualname__}"
-        result: dict[str, Any] = {}
-        # PK attribute in DB table might have a different name
-        if not (omit_nulls and self.id is None):
-            pk_name: str = sob_col_names[cls_name][0]
-            result[pk_name] = self.id
-        result.update({k: v for k, v in self.__dict__.items()
-                      if k.islower() and not (k.startswith("_") or k == "id" or (omit_nulls and v is None))})
-        return result
 
     # noinspection PyUnusedLocal
     def load_references(self,
@@ -380,6 +398,7 @@ class PySob:
     def initialize(db_specs: tuple[type[StrEnum] | list[str], int | str] |
                              tuple[type[StrEnum] | list[str], int, bool],  # noqa
                    attrs_unique: list[tuple[str]] = None,
+                   attrs_input: list[tuple[str, str]] = None,
                    logger: Logger = None) -> None:
 
         # obtain the invoking class
@@ -406,6 +425,10 @@ class PySob:
             # register the sets of unique attributes
             if attrs_unique:
                 sob_attrs_unique.update({cls_name: attrs_unique})
+
+            # register the names used for data input
+            if attrs_input:
+                sob_attrs_input.update({cls_name: attrs_input})
 
             if logger:
                 logger.debug(msg=f"Inicialized access data for class '{cls_name}'")
@@ -496,6 +519,48 @@ class PySob:
         if errors and logger:
             logger.error(msg="; ".join(errors))
 
+        return result
+
+    @staticmethod
+    def get_values(attrs: list[str],
+                   table_alias: str = None,
+                   table_joins: str = None,
+                   where_clause: str = None,
+                   where_vals: tuple = None,
+                   where_data: dict[str, Any] = None,
+                   db_engine: DbEngine = None,
+                   db_conn: Any = None,
+                   committable: bool = None,
+                   errors: list[str] = None,
+                   logger: Logger = None) -> list[tuple] | None:
+
+        # inicialize the return variable
+        result: list[tuple] | None = None
+
+        # make sure to have an errors list
+        if not isinstance(errors, list):
+            errors = []
+
+        # obtain the invoking class
+        cls: type[Sob] = PySob.__get_invoking_class(errors=errors,
+                                                    logger=logger)
+        if not errors:
+            # build the attributes list
+            cls_name: str = f"{cls.__module__}.{cls.__qualname__}"
+            tbl_name: str = sob_db_specs[cls_name][0]
+            if table_alias:
+                tbl_name = f"{tbl_name} {table_alias}"
+            if table_joins:
+                tbl_name += f" {table_joins}"
+            result = db_select(sel_stmt=f"SELECT DISTINCT {''.join(attrs)} FROM {tbl_name}",
+                               where_clause=where_clause,
+                               where_vals=where_vals,
+                               where_data=where_data,
+                               engine=db_engine,
+                               connection=db_conn,
+                               committable=committable,
+                               errors=errors,
+                               logger=logger)
         return result
 
     @staticmethod
