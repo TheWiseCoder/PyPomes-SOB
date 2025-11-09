@@ -373,22 +373,13 @@ class PySob:
         result: bool = False
 
         cls_name: str = f"{self.__class__.__module__}.{self.__class__.__qualname__}"
-        pk_name: str = sob_db_columns[cls_name][0]
         tbl_name: str = sob_db_specs[cls_name][0]
 
         # build the WHERE clause
-        where_data: dict[str, Any]
-        if self.id:
-            # use object's ID
-            where_data = {pk_name: self.id}
-        else:
-            # use first set of unique attributes with non-null values found
-            where_data = self.get_unique_attrs()
-
+        where_data: dict[str, Any] = self.get_unique_attrs()
         if not where_data:
             # use object's available data
             where_data = self.get()
-            where_data.pop(pk_name, None)
 
         # execute the query
         if where_data:
@@ -436,19 +427,13 @@ class PySob:
         result: bool = False
 
         cls_name: str = f"{self.__class__.__module__}.{self.__class__.__qualname__}"
-        pk_name: str = sob_db_columns[cls_name][0]
         tbl_name: str = sob_db_specs[cls_name][0]
-        where_data: dict[str, Any]
-        if self.id:
-            where_data = {pk_name: self.id}
-        else:
-            # use first set of unique attributes with non-null values found
-            where_data = self.get_unique_attrs()
 
+        # build the WHERE clause
+        where_data: dict[str, Any] = self.get_unique_attrs()
         if not where_data:
             # use object's available data
             where_data = self.get(omit_nulls=omit_nulls)
-            where_data.pop(pk_name, None)
 
         # make sure to have an errors list
         if not isinstance(errors, list):
@@ -480,6 +465,7 @@ class PySob:
             if self._logger:
                 self._logger.error(msg=msg)
         else:
+            pk_name: str = sob_db_columns[cls_name][0]
             rec: tuple = recs[0]
             for inx, attr in enumerate(attrs):
                 # PK attribute in DB table might have a different name
@@ -521,26 +507,32 @@ class PySob:
         """
         Retrieve the key/value pairs of the first set of *unique* attributes with non-null values found.
 
+        The first attribute set to check is the default, which is comprised of the object's *id* attribute.
         The optional sets of *unique* attributes are specifed at class initialization time, with the
         appropriate parameter in the *initialize()* operation.
 
-        :return: a list with the key/value pairs of the first set of *unique* attributes with non-null values found
+        :return: a *dict* with key/value pairs of the first set of *unique* attributes with non-null values found
         """
         # initialize the return variable
-        result: dict[str, Any] | None = None
+        result: dict[str, Any] = {}
 
         cls_name: str = f"{self.__class__.__module__}.{self.__class__.__qualname__}"
-        if sob_attrs_unique[cls_name]:
-            # use first set of unique attributes with non-null values found
+        if self.id:
+            # use the object's 'id' attribute
+            pk_name: str = sob_db_columns[cls_name][0]
+            result = {pk_name: self.id}
+        elif sob_attrs_unique[cls_name]:
+            # use first set of unique attributes found with non-null values
             for attr_set in sob_attrs_unique[cls_name]:
                 data: dict[str, Any] = {}
                 for attr in attr_set:
                     val: Any = self.__dict__.get(attr)
                     if val is not None:
                         data[attr] = val
-                if len(data) == len(sob_attrs_unique[cls_name]):
+                if len(data) == len(attr_set):
                     result = data
                     break
+
         return result
 
     # noinspection PyUnusedLocal
@@ -553,7 +545,7 @@ class PySob:
                         committable: bool = None,
                         errors: list[str] = None) -> None:
         """
-        Load the *SOB* references in *__references* from the database.
+        Load the *SOB* references specified in *__references* from the database.
 
         The targer database engine, specified or default, must have been previously configured.
         The parameter *committable* is relevant only if *db_conn* is provided, and is otherwise ignored.
@@ -583,7 +575,7 @@ class PySob:
                               committable: bool = None,
                               errors: list[str] = None) -> None:
         """
-        Invalidate the object's *SOB* references in *__references*.
+        Invalidate the object's *SOB* references specified in *__references*.
 
         The targer database engine, specified or default, must have been previously configured.
         The parameter *committable* is relevant only if *db_conn* is provided, and is otherwise ignored.
@@ -591,7 +583,7 @@ class PySob:
 
         Whenever needed, this operation must be by the subclass level.
 
-        :param __references: the *SOB* references to load
+        :param __references: the *SOB* references to invalidate
         :param db_engine: the reference database engine (uses the default engine, if not provided)
         :param db_conn: optional connection to use (obtains a new one, if not provided)
         :param committable: whether to commit the database operations upon errorless completion
