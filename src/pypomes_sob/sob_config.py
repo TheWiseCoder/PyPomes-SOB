@@ -1,3 +1,4 @@
+from logging import Logger
 from pypomes_core import APP_PREFIX, env_get_int, env_get_str
 from typing import Final
 
@@ -27,3 +28,6 @@ sob_attrs_unique: dict[str, list[tuple[str]]] = {}
 
 # lists names for data input, mapping them to instance attributes (may map to 'None')
 sob_attrs_input: dict[str, list[tuple[str, str]]] = {}
+
+# optional loggers for class and object instance related operations
+sob_loggers: dict[str, Logger] = {}

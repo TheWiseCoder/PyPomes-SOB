@@ -18,7 +18,8 @@ from typing import Any, Literal, TypeVar
 
 from .sob_config import (
     SOB_BASE_FOLDER, SOB_MAX_THREADS,
-    sob_db_columns, sob_db_specs, sob_attrs_input, sob_attrs_unique
+    sob_db_columns, sob_db_specs,
+    sob_attrs_input, sob_attrs_unique, sob_loggers
 )
 
 # 'Sob' stands for all subclasses of 'PySob'
@@ -32,7 +33,11 @@ class PySob:
 
     The *SOB* objects are mapped to a *RDBMS* table, and present relationships within and among themselves
     typical of the relational paradigm, such as primary and foreign keys, nullability, uniqueness, one-to-many,
-    many-to-many, to mention just a few.
+    and many-to-many, to mention just a few.
+
+    The only instance attribute defined at root class level is *id* (type *int* or *str*), the object's
+    identification, which may be mapped to a different name in storage. Other attributes are expected to be
+    defined by its subclasses.
     """
 
     def __init__(self,
@@ -42,19 +47,18 @@ class PySob:
                  db_engine: DbEngine = None,
                  db_conn: Any = None,
                  committable: bool = None,
-                 errors: list[str] = None,
-                 logger: Logger = None) -> None:
+                 errors: list[str] = None) -> None:
         """
         Instantiate a *SOB* object from its subclass.
 
-        If loading the corresponding data from a database is desired, *where_data* should be specifed,
-        and its contents should yield just one tuple when used in a *SELECT* statement.
+        If loading the corresponding data from storage is desired, *where_data* should be specifed,
+        and the criteria therein should yield just one tuple, when used in a *SELECT* statement.
 
         The targer database engine, specified or default, must have been previously configured.
         The parameter *committable* is relevant only if *db_conn* is provided, and is otherwise ignored.
         A rollback is always attempted, if an error occurs.
 
-        If provided, *logger* is used, and saved for further usage in operations involving the object.
+        If provided, *logger* is used, and saved for further usage in operations involving the object instances.
 
         :param __references: the *SOB* references to load at object instantiation time
         :param where_data: the criteria to load the oject's data from the database
@@ -62,9 +66,7 @@ class PySob:
         :param db_conn: optional connection to use (obtains a new one, if not provided)
         :param committable: whether to commit the database operations upon errorless completion
         :param errors: incidental error messages
-        :param logger: optional logger
         """
-        self._logger: Logger = logger
         # maps to the entity's PK in its DB table (returned on INSERT operations)
         self.id: int | str | None = None
 
@@ -120,6 +122,7 @@ class PySob:
             errors = []
 
         # execute the INSERT statement
+        logger: Logger = sob_loggers.get(cls_name)
         tbl_name = sob_db_specs[cls_name][0]
         rec: tuple[Any] = db_insert(insert_stmt=f"INSERT INTO {tbl_name}",
                                     insert_data=insert_data,
@@ -128,14 +131,14 @@ class PySob:
                                     connection=db_conn,
                                     committable=committable,
                                     errors=errors,
-                                    logger=self._logger)
+                                    logger=logger)
         if not errors:
             if is_identity:
                 # PK is an identity column
                 self.id = rec[0]
-        elif self._logger:
-            self._logger.error(msg="Error INSERTing into table "
-                                   f"{tbl_name}: {'; '.join(errors)}")
+        elif logger:
+            logger.error(msg="Error INSERTing into table "
+                             f"{tbl_name}: {'; '.join(errors)}")
         return not errors
 
     def update(self,
@@ -168,6 +171,7 @@ class PySob:
             errors = []
 
         # execute the UPDATE statement
+        logger: Logger = sob_loggers.get(cls_name)
         db_update(update_stmt=f"UPDATE {tbl_name}",
                   update_data=update_data,
                   where_data={pk_name: key},
@@ -177,11 +181,11 @@ class PySob:
                   connection=db_conn,
                   committable=committable,
                   errors=errors,
-                  logger=self._logger)
+                  logger=logger)
 
-        if errors and self._logger:
-            self._logger.error(msg="Error UPDATEing table "
-                                   f"{tbl_name}: {'; '.join(errors)}")
+        if errors and logger:
+            logger.error(msg="Error UPDATEing table "
+                             f"{tbl_name}: {'; '.join(errors)}")
         return not errors
 
     def persist(self,
@@ -253,6 +257,7 @@ class PySob:
             errors = []
 
         # execute the DELETE statement
+        logger: Logger = sob_loggers.get(cls_name)
         result: int = db_delete(delete_stmt=f"DELETE FROM {tbl_name}",
                                 where_data=where_data,
                                 max_count=1,
@@ -260,12 +265,12 @@ class PySob:
                                 connection=db_conn,
                                 committable=committable,
                                 errors=errors,
-                                logger=self._logger)
+                                logger=logger)
         if not errors:
             self.clear()
-        elif self._logger:
-            self._logger.error(msg="Error DELETEing from table "
-                                   f"{tbl_name}: {'; '.join(errors)}")
+        elif logger:
+            logger.error(msg="Error DELETEing from table "
+                             f"{tbl_name}: {'; '.join(errors)}")
         return result
 
     def clear(self) -> None:
@@ -310,14 +315,15 @@ class PySob:
         """
         cls_name: str = f"{self.__class__.__module__}.{self.__class__.__qualname__}"
         tbl_name = sob_db_specs[cls_name][0]
+        logger: Logger = sob_loggers.get(cls_name)
         for key, value in data.items():
             if isinstance(value, Enum) and "use_names" in value.__class__:
                 # use enum names assigned as values in 'data'
                 value = value.name
             if key in self.__dict__:
                 self.__dict__[key] = value
-            elif self._logger:
-                self._logger.warning(msg=f"'{key}' is not an attribute of '{tbl_name}'")
+            elif logger:
+                logger.warning(msg=f"'{key}' is not an attribute of '{tbl_name}'")
 
     def get_inputs(self) -> dict[str, Any] | None:
         """
@@ -383,13 +389,14 @@ class PySob:
 
         # execute the query
         if where_data:
+            logger: Logger = sob_loggers.get(cls_name)
             result = db_exists(table=tbl_name,
                                where_data=where_data,
                                engine=db_engine,
                                connection=db_conn,
                                committable=committable,
                                errors=errors,
-                               logger=self._logger)
+                               logger=logger)
         return result
 
     def load(self,
@@ -440,6 +447,7 @@ class PySob:
             errors = []
 
         # loading the object from the database might fail
+        logger: Logger = sob_loggers.get(cls_name)
         attrs: list[str] = self.get_columns()
         recs: list[tuple] = db_select(sel_stmt=f"SELECT {', '.join(attrs)} FROM {tbl_name}",
                                       where_data=where_data,
@@ -448,7 +456,7 @@ class PySob:
                                       connection=db_conn,
                                       committable=committable,
                                       errors=errors,
-                                      logger=self._logger)
+                                      logger=logger)
         msg: str | None = None
         if errors:
             msg = ("Error SELECTing from table "
@@ -462,8 +470,8 @@ class PySob:
 
         if msg:
             errors.append(msg)
-            if self._logger:
-                self._logger.error(msg=msg)
+            if logger:
+                logger.error(msg=msg)
         else:
             pk_name: str = sob_db_columns[cls_name][0]
             rec: tuple = recs[0]
@@ -557,13 +565,16 @@ class PySob:
         :param committable: whether to commit the database operations upon errorless completion
         :param errors: incidental error messages
         """
+        cls_name: str = f"{self.__class__.__module__}.{self.__class__.__qualname__}"
+        logger: Logger = sob_loggers.get(cls_name)
+
         # must be implemented by subclasses containing references
         msg: str = (f"Subclass {self.__class__.__module__}.{self.__class__.__qualname__} "
                     "failed to implement 'load_references()'")
         if isinstance(errors, list):
             errors.append(msg)
-        if self._logger:
-            self._logger.error(msg=msg)
+        if logger:
+            logger.error(msg=msg)
 
     # noinspection PyUnusedLocal
     # ruff: noqa: ARG002
@@ -589,13 +600,16 @@ class PySob:
         :param committable: whether to commit the database operations upon errorless completion
         :param errors: incidental error messages
         """
+        cls_name: str = f"{self.__class__.__module__}.{self.__class__.__qualname__}"
+        logger: Logger = sob_loggers.get(cls_name)
+
         # must be implemented by subclasses containing references
         msg: str = (f"Subclass {self.__class__.__module__}.{self.__class__.__qualname__} "
                     "failed to implement 'invalidate_references()'")
         if isinstance(errors, list):
             errors.append(msg)
-        if self._logger:
-            self._logger.error(msg=msg)
+        if logger:
+            logger.error(msg=msg)
 
     # noinspection PyPep8
     @staticmethod
@@ -621,15 +635,16 @@ class PySob:
         The optional parameter *attrs_input* maps names used in input operations to the actual names of the
         attributes. It is not required that it be complete, as it might map only a subset of attributes.
 
+        If provided, *logger* is used, and saved for further usage in operations involving the class and
+        object instances.
+
         :param db_specs: the attributes mapped to the corresponding database table
         :param attrs_unique: the sets of attributes defining object's uniqueness in the database
         :param attrs_input: mapping of names used in input to actual attribute names
         :param logger: optional logger
         """
         # obtain the invoking class
-        errors: list[str] = []
-        cls: type[Sob] = PySob.__get_invoking_class(errors=errors,
-                                                    logger=logger)
+        cls: type[Sob] = PySob.__get_invoking_class(logger=logger)
         # initialize its data
         if cls:
             # retrieve the list of DB names
@@ -645,7 +660,7 @@ class PySob:
             if len(db_specs) == 2:
                 # PK defaults to being an identity attribute in the DB for type 'int'
                 db_specs += (db_specs[1] is int,)
-            sob_db_specs.update({cls_name: (tbl_name, db_specs[1], db_specs[2])})
+            sob_db_specs[cls_name] = (tbl_name, db_specs[1], db_specs[2])
 
             # register the sets of unique attributes
             if attrs_unique:
@@ -656,7 +671,27 @@ class PySob:
                 sob_attrs_input.update({cls_name: attrs_input})
 
             if logger:
+                sob_loggers[cls_name] = logger
                 logger.debug(msg=f"Inicialized access data for class '{cls_name}'")
+
+    @staticmethod
+    def get_logger() -> Logger | None:
+        """
+        Get the logger associated with the current subclass.
+
+        :return: the logger associated with the subclass, of *None* if error or not provided
+        """
+        # initialize the return variable
+        result: Logger | None = None
+
+        # obtain the invoking class
+        cls: type[Sob] = PySob.__get_invoking_class()
+
+        if cls:
+            cls_name: str = f"{cls.__module__}.{cls.__qualname__}"
+            result = sob_loggers.get(cls_name)
+
+        return result
 
     # noinspection PyPep8
     @staticmethod
@@ -670,8 +705,7 @@ class PySob:
               db_engine: DbEngine = None,
               db_conn: Any = None,
               committable: bool = None,
-              errors: list[str] = None,
-              logger: Logger = None) -> int | None:
+              errors: list[str] = None) -> int | None:
         """
         Count the occurrences of tuples in the corresponding database table, as per the criteria provided.
 
@@ -696,7 +730,6 @@ class PySob:
         :param db_conn: optional connection to use (obtains a new one, if not provided)
         :param committable: whether to commit the database operations upon errorless completion
         :param errors: incidental error messages
-        :param logger: optional logger
         :return: the number of tuples counted, or *None* if error
         """
         # inicialize the return variable
@@ -707,9 +740,12 @@ class PySob:
             errors = []
 
         # obtain the invoking class
-        cls: type[Sob] = PySob.__get_invoking_class(errors=errors,
-                                                    logger=logger)
+        cls: type[Sob] = PySob.__get_invoking_class(errors=errors)
+
         if not errors:
+            cls_name: str = f"{cls.__module__}.{cls.__qualname__}"
+            logger: Logger = sob_loggers.get(cls_name)
+
             # build the FROM clause
             from_clause: str = PySob.__build_from_clause(cls=cls,
                                                          alias=alias,
@@ -725,9 +761,6 @@ class PySob:
                               committable=committable,
                               errors=errors,
                               logger=logger)
-        if errors and logger:
-            logger.error(msg="; ".join(errors))
-
         return result
 
     # noinspection PyPep8
@@ -743,8 +776,7 @@ class PySob:
                db_engine: DbEngine = None,
                db_conn: Any = None,
                committable: bool = None,
-               errors: list[str] = None,
-               logger: Logger = None) -> bool | None:
+               errors: list[str] = None) -> bool | None:
         """
         Determine if at least one tuple exists in the database table, as per the criteria provided.
 
@@ -770,7 +802,6 @@ class PySob:
         :param db_conn: optional connection to use (obtains a new one, if not provided)
         :param committable: whether to commit the database operations upon errorless completion
         :param errors: incidental error messages
-        :param logger: optional logger
         :return: *True* if the criteria for tuple existence were met, *False* otherwise, or *None* if error
         """
         # inicialize the return variable
@@ -781,9 +812,12 @@ class PySob:
             errors = []
 
         # obtain the invoking class
-        cls: type[Sob] = PySob.__get_invoking_class(errors=errors,
-                                                    logger=logger)
+        cls: type[Sob] = PySob.__get_invoking_class(errors=errors)
+
         if not errors:
+            cls_name: str = f"{cls.__module__}.{cls.__qualname__}"
+            logger: Logger = sob_loggers.get(cls_name)
+
             # build the FROM clause
             from_clause: str = PySob.__build_from_clause(cls=cls,
                                                          alias=alias,
@@ -800,9 +834,6 @@ class PySob:
                                committable=committable,
                                errors=errors,
                                logger=logger)
-        if errors and logger:
-            logger.error(msg="; ".join(errors))
-
         return result
 
     # noinspection PyPep8
@@ -822,8 +853,7 @@ class PySob:
                    db_engine: DbEngine = None,
                    db_conn: Any = None,
                    committable: bool = None,
-                   errors: list[str] = None,
-                   logger: Logger = None) -> list[tuple] | None:
+                   errors: list[str] = None) -> list[tuple] | None:
         """
         Retrieve the values of *attrs* from the database, as per the criteria provided.
 
@@ -859,7 +889,6 @@ class PySob:
         :param db_conn: optional connection to use (obtains a new one, if not provided)
         :param committable: whether to commit the database operations upon errorless completion
         :param errors: incidental error messages
-        :param logger: optional logger
         :return: a list containing tuples with the values retrieved, *[]* on empty result, or *None* if error
         """
         # inicialize the return variable
@@ -870,9 +899,12 @@ class PySob:
             errors = []
 
         # obtain the invoking class
-        cls: type[Sob] = PySob.__get_invoking_class(errors=errors,
-                                                    logger=logger)
+        cls: type[Sob] = PySob.__get_invoking_class(errors=errors)
+
         if not errors:
+            cls_name: str = f"{cls.__module__}.{cls.__qualname__}"
+            logger: Logger = sob_loggers.get(cls_name)
+
             # build the FROM clause
             from_clause: str = PySob.__build_from_clause(cls=cls,
                                                          alias=alias,
@@ -912,8 +944,7 @@ class PySob:
                  db_engine: DbEngine = None,
                  db_conn: Any = None,
                  committable: bool = None,
-                 errors: list[str] = None,
-                 logger: Logger = None) -> list[Sob] | None:
+                 errors: list[str] = None) -> list[Sob] | None:
         """
         Retrieve the instances of *SOB* objects from the database, as per the criteria provided.
 
@@ -949,7 +980,6 @@ class PySob:
         :param db_conn: optional connection to use (obtains a new one, if not provided)
         :param committable: whether to commit the database operations upon errorless completion
         :param errors: incidental error messages
-        :param logger: optional logger
         :return: a list with the objects instantiated, *[]* on empty result, or *None* if error
         """
         # inicialize the return variable
@@ -960,10 +990,11 @@ class PySob:
             errors = []
 
         # obtain the invoking class
-        cls: type[Sob] = PySob.__get_invoking_class(errors=errors,
-                                                    logger=logger)
+        cls: type[Sob] = PySob.__get_invoking_class(errors=errors)
+
         if not errors:
             cls_name: str = f"{cls.__module__}.{cls.__qualname__}"
+            logger: Logger = sob_loggers.get(cls_name)
 
             # build the FROM clause
             from_clause: str = PySob.__build_from_clause(cls=cls,
@@ -1015,9 +1046,6 @@ class PySob:
                 if not errors:
                     result = objs
 
-        if errors and logger:
-            logger.error(msg="; ".join(errors))
-
         return result
 
     @staticmethod
@@ -1029,8 +1057,7 @@ class PySob:
               db_engine: DbEngine = None,
               db_conn: Any = None,
               committable: bool = None,
-              errors: list[str] = None,
-              logger: Logger = None) -> int | None:
+              errors: list[str] = None) -> int | None:
         """
         Erase touples from the corresponding database table, as per the criteria provided.
 
@@ -1058,7 +1085,6 @@ class PySob:
         :param db_conn: optional connection to use (obtains a new one, if not provided)
         :param committable: whether to commit the database operations upon errorless completion
         :param errors: incidental error messages
-        :param logger: optional logger
         :return: the number of deleted tuples, or *None* if error
         """
         # initialize the return variable
@@ -1069,12 +1095,14 @@ class PySob:
             errors = []
 
         # obtain the invoking class
-        cls: type[Sob] = PySob.__get_invoking_class(errors=errors,
-                                                    logger=logger)
-        # delete specified rows
+        cls: type[Sob] = PySob.__get_invoking_class(errors=errors)
+
         if not errors:
             cls_name: str = f"{cls.__module__}.{cls.__qualname__}"
+            logger: Logger = sob_loggers.get(cls_name)
             tbl_name: str = sob_db_specs[cls_name][0]
+
+            # delete specified rows
             result = db_delete(delete_stmt=f"DELETE FROM {tbl_name}",
                                where_clause=where_clause,
                                where_vals=where_vals,
@@ -1086,9 +1114,6 @@ class PySob:
                                committable=committable,
                                errors=errors,
                                logger=logger)
-        if errors and logger:
-            logger.error(msg="; ".join(errors))
-
         return result
 
     @staticmethod
@@ -1097,8 +1122,7 @@ class PySob:
               db_engine: DbEngine = None,
               db_conn: Any = None,
               committable: bool = None,
-              errors: list[str] = None,
-              logger: Logger = None) -> tuple | int | None:
+              errors: list[str] = None) -> tuple | int | None:
         """
         Persist the data in *insert_data* in the corresponding database table, with an *INSERT* operation.
 
@@ -1116,7 +1140,6 @@ class PySob:
         :param db_conn: optional connection to use (obtains a new one, if not provided)
         :param committable: whether to commit the database operations upon errorless completion
         :param errors: incidental error messages
-        :param logger: optional logger
         :return: the values of *return_cols*, the number of inserted tuples (0 ou 1), or *None* if error
         """
         # initialize the return variable
@@ -1127,12 +1150,14 @@ class PySob:
             errors = []
 
         # obtain the invoking class
-        cls: type[Sob] = PySob.__get_invoking_class(errors=errors,
-                                                    logger=logger)
+        cls: type[Sob] = PySob.__get_invoking_class(errors=errors)
         # delete specified rows
         if not errors:
             cls_name: str = f"{cls.__module__}.{cls.__qualname__}"
+            logger: Logger = sob_loggers.get(cls_name)
             tbl_name: str = sob_db_specs[cls_name][0]
+
+            # persis the data
             result = db_insert(insert_stmt=f"INSERT INTO {tbl_name}",
                                insert_data=insert_data,
                                return_cols=return_cols,
@@ -1141,14 +1166,11 @@ class PySob:
                                committable=committable,
                                errors=errors,
                                logger=logger)
-        if errors and logger:
-            logger.error(msg="; ".join(errors))
-
         return result
 
     @staticmethod
-    def __get_invoking_class(errors: list[str] | None,
-                             logger: Logger | None) -> type[Sob] | None:
+    def __get_invoking_class(errors: list[str] = None,
+                             logger: Logger = None) -> type[Sob] | None:
         """
         Retrieve the fully-qualified type of the subclass currently being accessed.
 
@@ -1184,9 +1206,8 @@ class PySob:
                                      classname)
                 except Exception as e:
                     if logger:
-                        msg: str = exc_format(exc=e,
-                                              exc_info=sys.exc_info())
-                        logger.warning(msg=msg)
+                        logger.warning(msg=exc_format(exc=e,
+                                                      exc_info=sys.exc_info()))
                 break
 
         if not result and SOB_BASE_FOLDER:
@@ -1198,9 +1219,8 @@ class PySob:
                                  classname)
             except Exception as e:
                 if logger:
-                    msg: str = exc_format(exc=e,
-                                          exc_info=sys.exc_info())
-                    logger.warning(msg=msg)
+                    logger.warning(msg=exc_format(exc=e,
+                                                  exc_info=sys.exc_info()))
 
         if not result:
             msg: str = (f"Unable to obtain class '{classname}', "
