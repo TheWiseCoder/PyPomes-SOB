@@ -10,18 +10,17 @@ SOB_MAX_THREADS: Final[int] = env_get_int(key=f"{APP_PREFIX}_SOB_MAX_THREADS",
 
 # must have entries for all subclasses of 'PySob'
 #   key: the fully-qualified name of the class type of the subclass of 'PySob'
-#   value: a tuple with 4 elements:
-#     - the name of the entity's DB table
-#     - the type of its PK attribute (currently, 'int' and 'str' are supported)
-#     - whether the PK attribute is an identity (has values generated automatically by the DB)
-sob_db_specs: dict[str, (str, type, bool)] = {}
+#   values: the names of the entity's database columns, which must be matched by the names of its attributes
+#           (the first element is the name of its PK attribute - maps to 'self.id')
+sob_db_columns: dict[str, tuple] = {}
 
 # must have entries for all subclasses of 'PySob'
 #   key: the fully-qualified name of the class type of the subclass of 'PySob'
-#   values: the names of the columns in the entity's DB table
-#           names of instance attributes must match
-#           the first element is the name of its PK attribute (maps to 'self.id')
-sob_col_names: dict[str, tuple] = {}
+#   value: a tuple with 3 elements:
+#     - the name of the entity's DB table
+#     - the type of its PK attribute (currently, 'int' and 'str' are supported)
+#     - whether the PK attribute is an identity (has values generated automatically by the DB)
+sob_db_specs: dict[str, tuple[str, type, bool]] = {}
 
 # holds sets of instance attributes unique in DB
 sob_attrs_unique: dict[str, list[tuple[str]]] = {}
