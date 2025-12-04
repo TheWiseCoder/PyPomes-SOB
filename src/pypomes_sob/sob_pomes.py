@@ -61,7 +61,7 @@ class PySob:
         If provided, *logger* is used, and saved for further usage in operations involving the object instances.
 
         :param __references: the *SOB* references to load at object instantiation time
-        :param where_data: the criteria to load the oject's data from the database
+        :param where_data: the criteria to load the object's data from the database
         :param db_engine: the reference database engine (uses the default engine, if not provided)
         :param db_conn: optional connection to use (obtains a new one, if not provided)
         :param committable: whether to commit the database operations upon errorless completion
@@ -314,16 +314,30 @@ class PySob:
         :param data: key/value pairs to set the object with
         """
         cls_name: str = f"{self.__class__.__module__}.{self.__class__.__qualname__}"
-        tbl_name = sob_db_specs[cls_name][0]
         logger: Logger = sob_loggers.get(cls_name)
+
+        # traverse the data
         for key, value in data.items():
-            if isinstance(value, Enum) and "use_names" in value.__class__:
-                # use enum names assigned as values in 'data'
-                value = value.name
+
+            # normalize 'key'
+            if isinstance(key, Enum):
+                if "use_names" in key.__class__:
+                    key = str(key.name).lower()
+                else:
+                    key = str(key.value).lower()
+
+            # normalize 'value'
+            if isinstance(value, Enum):
+                if "use_names" in value.__class__:
+                    value = value.name
+                else:
+                    value = value.value
+
+            # register the key/value pair
             if key in self.__dict__:
                 self.__dict__[key] = value
             elif logger:
-                logger.warning(msg=f"'{key}' is not an attribute of '{tbl_name}'")
+                logger.warning(msg=f"'{key}' is not an attribute of class {cls_name}")
 
     def get_inputs(self) -> dict[str, Any] | None:
         """
@@ -462,10 +476,10 @@ class PySob:
             msg = ("Error SELECTing from table "
                    f"{tbl_name}: {'; '.join(errors)}")
         elif not recs:
-            msg = (f"No record found on table "
+            msg = ("No record found on table "
                    f"{tbl_name} for {dict_stringify(where_data)}")
         elif len(recs) > 1:
-            msg = (f"More than on record found on table "
+            msg = ("More than one record found on table "
                    f"{tbl_name} for {dict_stringify(where_data)}")
 
         if msg:
@@ -529,7 +543,7 @@ class PySob:
             # use the object's 'id' attribute
             pk_name: str = sob_db_columns[cls_name][0]
             result = {pk_name: self.id}
-        elif sob_attrs_unique[cls_name]:
+        elif cls_name in sob_attrs_unique:
             # use first set of unique attributes found with non-null values
             for attr_set in sob_attrs_unique[cls_name]:
                 data: dict[str, Any] = {}
@@ -672,7 +686,7 @@ class PySob:
 
             if logger:
                 sob_loggers[cls_name] = logger
-                logger.debug(msg=f"Inicialized access data for class '{cls_name}'")
+                logger.debug(msg=f"Inicialized access data for class {cls_name}")
 
     @staticmethod
     def get_logger() -> Logger | None:
@@ -928,6 +942,107 @@ class PySob:
 
     # noinspection PyPep8
     @staticmethod
+    def get_single(__references: type[Sob | list[Sob]] | list[type[Sob | list[Sob]]] = None,
+                   /,
+                   alias: str = None,
+                   joins: list[tuple[type[Sob] | str, str, str]] |
+                          list[tuple[type[Sob] | str, str, str, Literal["inner", "full", "left", "right"]]] = None,
+                   where_clause: str = None,
+                   where_vals: tuple = None,
+                   where_data: dict[str, Any] = None,
+                   db_engine: DbEngine = None,
+                   db_conn: Any = None,
+                   committable: bool = None,
+                   errors: list[str] = None) -> Sob | None:
+        """
+        Retrieve the single instance of the *SOB* object from the database, as per the criteria provided.
+
+        Selection criteria are specified in *where_clause*, and/or by key-value pairs in *where_data*,
+        which would be concatenated by the *AND* logical connector. Care should be exercised if *where_clause*
+        contains *IN* directives. In PostgreSQL, the list of values for an attribute with the *IN* directive
+        must be contained in a specific tuple, and the operation will break for a list of values containing
+        only 1 element. The safe way to specify *IN* directives is to add them to *where_data*, as the specifics
+        of each DB flavor will then be properly dealt with.
+
+        If more than 1 tuple in the database satisfy the selection criteria, an error is flagged. If the query
+        yields no tuples, no errors are flagged and *None* is returned.
+
+        The targer database engine, specified or default, must have been previously configured.
+        The parameter *committable* is relevant only if *db_conn* is provided, and is otherwise ignored.
+        A rollback is always attempted, if an error occurs.
+
+        :param __references: the *SOB* references to load at object instantiation time
+        :param alias: optional alias for the database table in the *SELECT* statement
+        :param joins: optional *JOIN* clauses to use
+        :param where_clause: optional criteria for tuple selection
+        :param where_vals: values to be associated with the selection criteria
+        :param where_data: the selection criteria specified as key-value pairs
+        :param db_engine: the reference database engine (uses the default engine, if not provided)
+        :param db_conn: optional connection to use (obtains a new one, if not provided)
+        :param committable: whether to commit the database operations upon errorless completion
+        :param errors: incidental error messages
+        :return: the instantiated *SOB* object, or *None* if not found or error
+        """
+        # inicialize the return variable
+        result: Sob | None = None
+
+        # make sure to have an errors list
+        if not isinstance(errors, list):
+            errors = []
+
+        # obtain the invoking class
+        cls: type[Sob] = PySob.__get_invoking_class(errors=errors)
+
+        if not errors:
+            cls_name: str = f"{cls.__module__}.{cls.__qualname__}"
+            logger: Logger = sob_loggers.get(cls_name)
+
+            # build the FROM clause
+            from_clause: str = PySob.__build_from_clause(cls=cls,
+                                                         alias=alias,
+                                                         joins=joins)
+            # build the attributes list
+            attrs: list[str] = []
+            for attr in sob_db_columns.get(cls_name):
+                if alias:
+                    attr = f"{alias}.{attr}"
+                attrs.append(attr)
+
+            # retrieve the data
+            sel_stmt: str = f"SELECT {', '.join(attrs)} FROM {from_clause}"
+            recs: list[tuple[int | str]] = db_select(sel_stmt=sel_stmt,
+                                                     where_clause=where_clause,
+                                                     where_vals=where_vals,
+                                                     where_data=where_data,
+                                                     min_count=0,
+                                                     max_count=1,
+                                                     engine=db_engine,
+                                                     connection=db_conn,
+                                                     committable=committable,
+                                                     errors=errors,
+                                                     logger=logger)
+            if recs:
+                # build the SOB object
+                sob: type[Sob] = cls()
+                data: dict[str, Any] = {}
+                for inx, attr in enumerate(sob_db_columns.get(cls_name)):
+                    data[attr] = recs[0][inx]
+                    sob.set(data=data)
+
+                if __references:
+                    PySob.__load_references(__references,
+                                            objs=[sob],
+                                            db_engine=db_engine,
+                                            db_conn=db_conn,
+                                            committable=committable,
+                                            errors=errors)
+                if not errors:
+                    result = sob
+
+        return result
+
+    # noinspection PyPep8
+    @staticmethod
     def retrieve(__references: type[Sob | list[Sob]] | list[type[Sob | list[Sob]]] = None,
                  /,
                  alias: str = None,
@@ -948,12 +1063,12 @@ class PySob:
         """
         Retrieve the instances of *SOB* objects from the database, as per the criteria provided.
 
-        Optionally, selection criteria may be specified in *where_clause*, or additionally by
-        key-value pairs in *where_data*, which would be concatenated by the *AND* logical connector.
-        Care should be exercised if *where_clause* contains *IN* directives. In PostgreSQL, the list of values
-        for an attribute with the *IN* directive must be contained in a specific tuple, and the operation will
-        break for a list of values containing only 1 element. The safe way to specify *IN* directives is
-        to add them to *where_data*, as the specifics of each DB flavor will then be properly dealt with.
+        Selection criteria may be specified in *where_clause*, and/or by key-value pairs in *where_data*,
+        which would be concatenated by the *AND* logical connector. Care should be exercised if *where_clause*
+        contains *IN* directives. In PostgreSQL, the list of values for an attribute with the *IN* directive
+        must be contained in a specific tuple, and the operation will break for a list of values containing
+        only 1 element. The safe way to specify *IN* directives is to add them to *where_data*, as the specifics
+        of each DB flavor will then be properly dealt with.
 
         If not positive integers, *min_count*, *max_count*, *offset_count*, and *limit_count* are ignored.
         If both *min_count* and *max_count* are specified with equal values, then exactly that number of
@@ -1032,11 +1147,9 @@ class PySob:
                         data[attr] = rec[inx]
                     sob: type[Sob] = cls()
                     sob.set(data=data)
-                    if errors:
-                        break
                     objs.append(sob)
 
-                if __references:
+                if __references and objs:
                     PySob.__load_references(__references,
                                             objs=objs,
                                             db_engine=db_engine,
