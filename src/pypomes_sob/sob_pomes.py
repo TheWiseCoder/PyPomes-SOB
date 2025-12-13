@@ -5,10 +5,13 @@ from concurrent.futures import Future, ThreadPoolExecutor
 from enum import StrEnum
 from importlib import import_module
 from inspect import FrameInfo, stack
-from enum import Enum
+from enum import Enum, IntEnum
 from logging import Logger
 from pathlib import Path
-from pypomes_core import dict_clone, dict_stringify, exc_format
+from pypomes_core import (
+    StrEnumUseName,
+    dict_clone, dict_has_value, dict_stringify, exc_format
+)
 from pypomes_db import (
     DbEngine, db_exists, db_count,
     db_select, db_insert, db_update, db_delete
@@ -65,7 +68,7 @@ class PySob:
         :param db_engine: the reference database engine (uses the default engine, if not provided)
         :param db_conn: optional connection to use (obtains a new one, if not provided)
         :param committable: whether to commit the database operations upon errorless completion
-        :param errors: incidental error messages
+        :param errors: incidental error messages (might be non-empty)
         """
         # maps to the entity's PK in its DB table (returned on INSERT operations)
         self.id: int | str | None = None
@@ -102,7 +105,7 @@ class PySob:
         :param db_engine: the reference database engine (uses the default engine, if not provided)
         :param db_conn: optional connection to use (obtains a new one, if not provided)
         :param committable: whether to commit the database operations upon errorless completion
-        :param errors: incidental error messages
+        :param errors: incidental error messages (might be non-empty)
         :return: *True* if the operation was successful, or *False* otherwise
         """
         # prepare data for INSERT
@@ -132,7 +135,7 @@ class PySob:
                                     committable=committable,
                                     errors=errors,
                                     logger=logger)
-        if not errors:
+        if rec is not None:
             if is_identity:
                 # PK is an identity column
                 self.id = rec[0]
@@ -156,7 +159,7 @@ class PySob:
         :param db_engine: the reference database engine (uses the default engine, if not provided)
         :param db_conn: optional connection to use (obtains a new one, if not provided)
         :param committable: whether to commit the database operations upon errorless completion
-        :param errors: incidental error messages
+        :param errors: incidental error messages (might be non-empty)
         :return: *True* if the operation was successful, or *False* otherwise
         """
         # prepare data for UPDATE
@@ -172,21 +175,16 @@ class PySob:
 
         # execute the UPDATE statement
         logger: Logger = sob_loggers.get(cls_name)
-        db_update(update_stmt=f"UPDATE {tbl_name}",
-                  update_data=update_data,
-                  where_data={pk_name: key},
-                  min_count=1,
-                  max_count=1,
-                  engine=db_engine,
-                  connection=db_conn,
-                  committable=committable,
-                  errors=errors,
-                  logger=logger)
-
-        if errors and logger:
-            logger.error(msg="Error UPDATEing table "
-                             f"{tbl_name}: {'; '.join(errors)}")
-        return not errors
+        return db_update(update_stmt=f"UPDATE {tbl_name}",
+                         update_data=update_data,
+                         where_data={pk_name: key},
+                         min_count=1,
+                         max_count=1,
+                         engine=db_engine,
+                         connection=db_conn,
+                         committable=committable,
+                         errors=errors,
+                         logger=logger) is not None
 
     def persist(self,
                 db_engine: DbEngine = None,
@@ -206,7 +204,7 @@ class PySob:
         :param db_engine: the reference database engine (uses the default engine, if not provided)
         :param db_conn: optional connection to use (obtains a new one, if not provided)
         :param committable: whether to commit the database operations upon errorless completion
-        :param errors: incidental error messages
+        :param errors: incidental error messages (might be non-empty)
         :return: *True* if the operation was successful, or *False* otherwise
         """
         # declare the return variale
@@ -239,7 +237,7 @@ class PySob:
         :param db_engine: the reference database engine (uses the default engine, if not provided)
         :param db_conn: optional connection to use (obtains a new one, if not provided)
         :param committable: whether to commit the database operations upon errorless completion
-        :param errors: incidental error messages
+        :param errors: incidental error messages (might be non-empty)
         :return: the number of deleted tuples, or *None* if error
         """
         cls_name: str = f"{self.__class__.__module__}.{self.__class__.__qualname__}"
@@ -266,11 +264,9 @@ class PySob:
                                 committable=committable,
                                 errors=errors,
                                 logger=logger)
-        if not errors:
+        if result is not None:
             self.clear()
-        elif logger:
-            logger.error(msg="Error DELETEing from table "
-                             f"{tbl_name}: {'; '.join(errors)}")
+
         return result
 
     def clear(self) -> None:
@@ -321,14 +317,14 @@ class PySob:
 
             # normalize 'key'
             if isinstance(key, Enum):
-                if "use_names" in key.__class__:
-                    key = str(key.name).lower()
+                if isinstance(key, IntEnum | StrEnumUseName):
+                    key = key.name.lower()
                 else:
-                    key = str(key.value).lower()
+                    key = key.value.lower()
 
             # normalize 'value'
             if isinstance(value, Enum):
-                if "use_names" in value.__class__:
+                if isinstance(value, StrEnumUseName):
                     value = value.name
                 else:
                     value = value.value
@@ -386,7 +382,7 @@ class PySob:
         :param db_engine: the reference database engine (uses the default engine, if not provided)
         :param db_conn: optional connection to use (obtains a new one, if not provided)
         :param committable: whether to commit the database operations upon errorless completion
-        :param errors: incidental error messages
+        :param errors: incidental error messages (might be non-empty)
         :return: *True* the object's current state is persisted, *False* otherwise, or *None* if error
         """
         # initialize the return variable
@@ -441,7 +437,7 @@ class PySob:
         :param db_engine: the reference database engine (uses the default engine, if not provided)
         :param db_conn: optional connection to use (obtains a new one, if not provided)
         :param committable: whether to commit the database operations upon errorless completion
-        :param errors: incidental error messages
+        :param errors: incidental error messages (might be non-empty)
         :return: *True* if the operation was successful, or *False* otherwise
         """
         # initialize the return variable
@@ -472,15 +468,13 @@ class PySob:
                                       errors=errors,
                                       logger=logger)
         msg: str | None = None
-        if errors:
-            msg = ("Error SELECTing from table "
-                   f"{tbl_name}: {'; '.join(errors)}")
-        elif not recs:
-            msg = ("No record found on table "
-                   f"{tbl_name} for {dict_stringify(where_data)}")
-        elif len(recs) > 1:
-            msg = ("More than one record found on table "
-                   f"{tbl_name} for {dict_stringify(where_data)}")
+        if recs is not None:
+            if len(recs) == 0:
+                msg = ("No record found on table "
+                       f"{tbl_name} for {dict_stringify(where_data)}")
+            elif len(recs) > 1:
+                msg = ("More than one record found on table "
+                       f"{tbl_name} for {dict_stringify(where_data)}")
 
         if msg:
             errors.append(msg)
@@ -496,14 +490,12 @@ class PySob:
                 else:
                     self.__dict__[attr] = rec[inx]
             if __references:
-                PySob.__load_references(__references,
-                                        objs=[self],
-                                        db_engine=db_engine,
-                                        db_conn=db_conn,
-                                        committable=committable,
-                                        errors=errors)
-            result = not errors
-
+                result = PySob.__load_references(__references,
+                                                 objs=[self],
+                                                 db_engine=db_engine,
+                                                 db_conn=db_conn,
+                                                 committable=committable,
+                                                 errors=errors) is not None
         return result
 
     def get_columns(self) -> list[str]:
@@ -577,7 +569,7 @@ class PySob:
         :param db_engine: the reference database engine (uses the default engine, if not provided)
         :param db_conn: optional connection to use (obtains a new one, if not provided)
         :param committable: whether to commit the database operations upon errorless completion
-        :param errors: incidental error messages
+        :param errors: incidental error messages (might be non-empty)
         """
         cls_name: str = f"{self.__class__.__module__}.{self.__class__.__qualname__}"
         logger: Logger = sob_loggers.get(cls_name)
@@ -612,7 +604,7 @@ class PySob:
         :param db_engine: the reference database engine (uses the default engine, if not provided)
         :param db_conn: optional connection to use (obtains a new one, if not provided)
         :param committable: whether to commit the database operations upon errorless completion
-        :param errors: incidental error messages
+        :param errors: incidental error messages (might be non-empty)
         """
         cls_name: str = f"{self.__class__.__module__}.{self.__class__.__qualname__}"
         logger: Logger = sob_loggers.get(cls_name)
@@ -710,18 +702,33 @@ class PySob:
     # noinspection PyPep8
     @staticmethod
     def count(alias: str = None,
-              joins: list[tuple[type[Sob] | str, str, str]] |
-                     list[tuple[type[Sob] | str, str, str, Literal["inner", "full", "left", "right"]]] = None,
+              joins: list[tuple[tuple[type[Sob], str] | type[Sob],
+                                list[tuple[StrEnum, StrEnum,
+                                     Literal["=", "!=", "<=", ">="]],
+                                     Literal["and", "or"]],
+                                Literal["inner", "full", "left", "right"]]] |
+                     list[tuple] = None,
               count_clause: str = None,
               where_clause: str = None,
               where_vals: tuple = None,
-              where_data: dict[str, Any] = None,
+              where_data: dict[StrEnum | str, Any] = None,
               db_engine: DbEngine = None,
               db_conn: Any = None,
               committable: bool = None,
               errors: list[str] = None) -> int | None:
         """
         Count the occurrences of tuples in the corresponding database table, as per the criteria provided.
+
+        Optionally, *joins* holds a list of tuples specifying the table joins, with the following format:
+            1. the first element identifies the table and optionally, the corresponding alias to use:
+                - a singlet, with the type of the *Sob* subclass whose database table is to be joined, or
+                - a 2-tuple, with the type of the *Sob* subclass whose database table is to be joined and its alias
+            2. a 2/3/4-tuple, or a list of 2/3/4-tuples, informs on the *ON* fragment conditions:
+                - the first attribute, as a string or a *StrEnum* instance
+                - the second attribute, as a string or a *StrEnum* instance
+                - the operation ("=", "!=", "<=", or ">=", defaults to "=")
+                - the connector to the next condition ("and" or "or", defaults to "and")
+            3. the third element is the type of the join ("inner", "full", "left", "right", defaults to "inner")
 
         Optionally, selection criteria may be specified in *where_clause*, or additionally by
         key-value pairs in *where_data*, which would be concatenated by the *AND* logical connector.
@@ -743,7 +750,7 @@ class PySob:
         :param db_engine: the reference database engine (uses the default engine, if not provided)
         :param db_conn: optional connection to use (obtains a new one, if not provided)
         :param committable: whether to commit the database operations upon errorless completion
-        :param errors: incidental error messages
+        :param errors: incidental error messages (might be non-empty)
         :return: the number of tuples counted, or *None* if error
         """
         # inicialize the return variable
@@ -756,15 +763,21 @@ class PySob:
         # obtain the invoking class
         cls: type[Sob] = PySob.__get_invoking_class(errors=errors)
 
-        if not errors:
+        if cls:
             cls_name: str = f"{cls.__module__}.{cls.__qualname__}"
             logger: Logger = sob_loggers.get(cls_name)
 
+            # obtain the aliases map
+            aliases: dict[str, str] = PySob.__build_aliases_map(subcls=cls,
+                                                                alias=alias,
+                                                                joins=joins)
             # build the FROM clause
-            from_clause: str = PySob.__build_from_clause(cls=cls,
-                                                         alias=alias,
+            from_clause: str = PySob.__build_from_clause(subcls=cls,
+                                                         aliases=aliases,
                                                          joins=joins)
             # retrieve the data
+            where_data = PySob.__add_aliases(attrs=where_data,
+                                             aliases=aliases)
             result = db_count(table=from_clause,
                               count_clause=count_clause,
                               where_clause=where_clause,
@@ -780,11 +793,15 @@ class PySob:
     # noinspection PyPep8
     @staticmethod
     def exists(alias: str = None,
-               joins: list[tuple[type[Sob] | str, str, str]] |
-                      list[tuple[type[Sob] | str, str, str, Literal["inner", "full", "left", "right"]]] = None,
+               joins: list[tuple[tuple[type[Sob], str] | type[Sob],
+                                 list[tuple[StrEnum, StrEnum,
+                                      Literal["=", "!=", "<=", ">="]],
+                                      Literal["and", "or"]],
+                                 Literal["inner", "full", "left", "right"]]] |
+                      list[tuple] = None,
                where_clause: str = None,
                where_vals: tuple = None,
-               where_data: dict[str, Any] = None,
+               where_data: dict[str | StrEnum, Any] = None,
                min_count: int = None,
                max_count: int = None,
                db_engine: DbEngine = None,
@@ -793,6 +810,17 @@ class PySob:
                errors: list[str] = None) -> bool | None:
         """
         Determine if at least one tuple exists in the database table, as per the criteria provided.
+
+        Optionally, *joins* holds a list of tuples specifying the table joins, with the following format:
+            1. the first element identifies the table and optionally, the corresponding alias to use:
+                - a singlet, with the type of the *Sob* subclass whose database table is to be joined, or
+                - a 2-tuple, with the type of the *Sob* subclass whose database table is to be joined and its alias
+            2. a 2/3/4-tuple, or a list of 2/3/4-tuples, informs on the *ON* fragment conditions:
+                - the first attribute, as a string or a *StrEnum* instance
+                - the second attribute, as a string or a *StrEnum* instance
+                - the operation ("=", "!=", "<=", or ">=", defaults to "=")
+                - the connector to the next condition ("and" or "or", defaults to "and")
+            3. the third element is the type of the join ("inner", "full", "left", "right", defaults to "inner")
 
         Optionally, selection criteria may be specified in *where_clause*, or additionally by
         key-value pairs in *where_data*, which would be concatenated by the *AND* logical connector.
@@ -815,7 +843,7 @@ class PySob:
         :param db_engine: the reference database engine (uses the default engine, if not provided)
         :param db_conn: optional connection to use (obtains a new one, if not provided)
         :param committable: whether to commit the database operations upon errorless completion
-        :param errors: incidental error messages
+        :param errors: incidental error messages (might be non-empty)
         :return: *True* if the criteria for tuple existence were met, *False* otherwise, or *None* if error
         """
         # inicialize the return variable
@@ -828,15 +856,21 @@ class PySob:
         # obtain the invoking class
         cls: type[Sob] = PySob.__get_invoking_class(errors=errors)
 
-        if not errors:
+        if cls:
             cls_name: str = f"{cls.__module__}.{cls.__qualname__}"
             logger: Logger = sob_loggers.get(cls_name)
 
+            # obtain the aliases map
+            aliases: dict[str, str] = PySob.__build_aliases_map(subcls=cls,
+                                                                alias=alias,
+                                                                joins=joins)
             # build the FROM clause
-            from_clause: str = PySob.__build_from_clause(cls=cls,
-                                                         alias=alias,
+            from_clause: str = PySob.__build_from_clause(subcls=cls,
+                                                         aliases=aliases,
                                                          joins=joins)
             # execute the query
+            where_data = PySob.__add_aliases(attrs=where_data,
+                                             aliases=aliases)
             result = db_exists(table=from_clause,
                                where_clause=where_clause,
                                where_vals=where_vals,
@@ -854,8 +888,12 @@ class PySob:
     @staticmethod
     def get_values(attrs: tuple[str],
                    alias: str = None,
-                   joins: list[tuple[type[Sob] | str, str, str]] |
-                          list[tuple[type[Sob] | str, str, str, Literal["inner", "full", "left", "right"]]] = None,
+                   joins: list[tuple[tuple[type[Sob], str] | type[Sob],
+                                     list[tuple[StrEnum, StrEnum,
+                                          Literal["=", "!=", "<=", ">="]],
+                                          Literal["and", "or"]],
+                                     Literal["inner", "full", "left", "right"]]] |
+                          list[tuple] = None,
                    where_clause: str = None,
                    where_vals: tuple = None,
                    where_data: dict[str, Any] = None,
@@ -871,7 +909,18 @@ class PySob:
         """
         Retrieve the values of *attrs* from the database, as per the criteria provided.
 
-        Optionally, selection criteria may be specified in *where_clause*, or additionally by
+        Optionally, *joins* holds a list of tuples specifying the table joins, with the following format:
+            1. the first element identifies the table and optionally, the corresponding alias to use:
+                - a singlet, with the type of the *Sob* subclass whose database table is to be joined, or
+                - a 2-tuple, with the type of the *Sob* subclass whose database table is to be joined and its alias
+            2. a 2/3/4-tuple, or a list of 2/3/4-tuples, informs on the *ON* fragment conditions:
+                - the first attribute, as a string or a *StrEnum* instance
+                - the second attribute, as a string or a *StrEnum* instance
+                - the operation ("=", "!=", "<=", or ">=", defaults to "=")
+                - the connector to the next condition ("and" or "or", defaults to "and")
+            3. the third element is the type of the join ("inner", "full", "left", "right", defaults to "inner")
+
+        Selection criteria may be specified in *where_clause*, or additionally by
         key-value pairs in *where_data*, which would be concatenated by the *AND* logical connector.
         Care should be exercised if *where_clause* contains *IN* directives. In PostgreSQL, the list of values
         for an attribute with the *IN* directive must be contained in a specific tuple, and the operation will
@@ -902,7 +951,7 @@ class PySob:
         :param db_engine: the reference database engine (uses the default engine, if not provided)
         :param db_conn: optional connection to use (obtains a new one, if not provided)
         :param committable: whether to commit the database operations upon errorless completion
-        :param errors: incidental error messages
+        :param errors: incidental error messages (might be non-empty)
         :return: a list containing tuples with the values retrieved, *[]* on empty result, or *None* if error
         """
         # inicialize the return variable
@@ -915,16 +964,23 @@ class PySob:
         # obtain the invoking class
         cls: type[Sob] = PySob.__get_invoking_class(errors=errors)
 
-        if not errors:
+        if cls:
             cls_name: str = f"{cls.__module__}.{cls.__qualname__}"
             logger: Logger = sob_loggers.get(cls_name)
 
+            # obtain the aliases map
+            aliases: dict[str, str] = PySob.__build_aliases_map(subcls=cls,
+                                                                alias=alias,
+                                                                joins=joins)
             # build the FROM clause
-            from_clause: str = PySob.__build_from_clause(cls=cls,
-                                                         alias=alias,
+            from_clause: str = PySob.__build_from_clause(subcls=cls,
+                                                         aliases=aliases,
                                                          joins=joins)
+            # build the aliased attributes list
+            aliased_attrs: list[str] = PySob.__add_aliases(attrs=attrs,
+                                                           aliases=aliases)
             # retrieve the data
-            result = db_select(sel_stmt=f"SELECT DISTINCT {', '.join(attrs)} FROM {from_clause}",
+            result = db_select(sel_stmt=f"SELECT DISTINCT {', '.join(aliased_attrs)} FROM {from_clause}",
                                where_clause=where_clause,
                                where_vals=where_vals,
                                where_data=where_data,
@@ -945,8 +1001,12 @@ class PySob:
     def get_single(__references: type[Sob | list[Sob]] | list[type[Sob | list[Sob]]] = None,
                    /,
                    alias: str = None,
-                   joins: list[tuple[type[Sob] | str, str, str]] |
-                          list[tuple[type[Sob] | str, str, str, Literal["inner", "full", "left", "right"]]] = None,
+                   joins: list[tuple[tuple[type[Sob], str] | type[Sob],
+                                     list[tuple[StrEnum, StrEnum,
+                                          Literal["=", "!=", "<=", ">="]],
+                                          Literal["and", "or"]],
+                                     Literal["inner", "full", "left", "right"]]] |
+                          list[tuple] = None,
                    where_clause: str = None,
                    where_vals: tuple = None,
                    where_data: dict[str, Any] = None,
@@ -956,6 +1016,17 @@ class PySob:
                    errors: list[str] = None) -> Sob | None:
         """
         Retrieve the single instance of the *SOB* object from the database, as per the criteria provided.
+
+        Optionally, *joins* holds a list of tuples specifying the table joins, with the following format:
+            1. the first element identifies the table and optionally, the corresponding alias to use:
+                - a singlet, with the type of the *Sob* subclass whose database table is to be joined, or
+                - a 2-tuple, with the type of the *Sob* subclass whose database table is to be joined and its alias
+            2. a 2/3/4-tuple, or a list of 2/3/4-tuples, informs on the *ON* fragment conditions:
+                - the first attribute, as a string or a *StrEnum* instance
+                - the second attribute, as a string or a *StrEnum* instance
+                - the operation ("=", "!=", "<=", or ">=", defaults to "=")
+                - the connector to the next condition ("and" or "or", defaults to "and")
+            3. the third element is the type of the join ("inner", "full", "left", "right", defaults to "inner")
 
         Selection criteria are specified in *where_clause*, and/or by key-value pairs in *where_data*,
         which would be concatenated by the *AND* logical connector. Care should be exercised if *where_clause*
@@ -980,7 +1051,7 @@ class PySob:
         :param db_engine: the reference database engine (uses the default engine, if not provided)
         :param db_conn: optional connection to use (obtains a new one, if not provided)
         :param committable: whether to commit the database operations upon errorless completion
-        :param errors: incidental error messages
+        :param errors: incidental error messages (might be non-empty)
         :return: the instantiated *SOB* object, or *None* if not found or error
         """
         # inicialize the return variable
@@ -993,22 +1064,25 @@ class PySob:
         # obtain the invoking class
         cls: type[Sob] = PySob.__get_invoking_class(errors=errors)
 
-        if not errors:
+        if cls:
             cls_name: str = f"{cls.__module__}.{cls.__qualname__}"
             logger: Logger = sob_loggers.get(cls_name)
 
+            # obtain the aliases map
+            aliases: dict[str, str] = PySob.__build_aliases_map(subcls=cls,
+                                                                alias=alias,
+                                                                joins=joins)
             # build the FROM clause
-            from_clause: str = PySob.__build_from_clause(cls=cls,
-                                                         alias=alias,
+            from_clause: str = PySob.__build_from_clause(subcls=cls,
+                                                         aliases=aliases,
                                                          joins=joins)
             # build the attributes list
-            attrs: list[str] = []
-            for attr in sob_db_columns.get(cls_name):
-                if alias:
-                    attr = f"{alias}.{attr}"
-                attrs.append(attr)
+            alias: str = aliases.get(cls.__qualname__)
+            attrs: list[str] = [f"{alias}.{attr}" for attr in sob_db_columns.get(cls_name)]
 
             # retrieve the data
+            where_data = PySob.__add_aliases(attrs=where_data,
+                                             aliases=aliases)
             sel_stmt: str = f"SELECT {', '.join(attrs)} FROM {from_clause}"
             recs: list[tuple[int | str]] = db_select(sel_stmt=sel_stmt,
                                                      where_clause=where_clause,
@@ -1023,20 +1097,18 @@ class PySob:
                                                      logger=logger)
             if recs:
                 # build the SOB object
-                sob: type[Sob] = cls()
+                sob: Sob = cls()
                 data: dict[str, Any] = {}
                 for inx, attr in enumerate(sob_db_columns.get(cls_name)):
                     data[attr] = recs[0][inx]
                     sob.set(data=data)
 
-                if __references:
-                    PySob.__load_references(__references,
-                                            objs=[sob],
-                                            db_engine=db_engine,
-                                            db_conn=db_conn,
-                                            committable=committable,
-                                            errors=errors)
-                if not errors:
+                if not __references or PySob.__load_references(__references,
+                                                               objs=[sob],
+                                                               db_engine=db_engine,
+                                                               db_conn=db_conn,
+                                                               committable=committable,
+                                                               errors=errors) is not None:
                     result = sob
 
         return result
@@ -1046,8 +1118,12 @@ class PySob:
     def retrieve(__references: type[Sob | list[Sob]] | list[type[Sob | list[Sob]]] = None,
                  /,
                  alias: str = None,
-                 joins: list[tuple[type[Sob] | str, str, str]] |
-                        list[tuple[type[Sob] | str, str, str, Literal["inner", "full", "left", "right"]]] = None,
+                 joins: list[tuple[tuple[type[Sob], str] | type[Sob],
+                                   list[tuple[StrEnum, StrEnum,
+                                        Literal["=", "!=", "<=", ">="]],
+                                        Literal["and", "or"]],
+                                   Literal["inner", "full", "left", "right"]]] |
+                        list[tuple] = None,
                  where_clause: str = None,
                  where_vals: tuple = None,
                  where_data: dict[str, Any] = None,
@@ -1062,6 +1138,17 @@ class PySob:
                  errors: list[str] = None) -> list[Sob] | None:
         """
         Retrieve the instances of *SOB* objects from the database, as per the criteria provided.
+
+        Optionally, *joins* holds a list of tuples specifying the table joins, with the following format:
+            1. the first element identifies the table and optionally, the corresponding alias to use:
+                - a singlet, with the type of the *Sob* subclass whose database table is to be joined, or
+                - a 2-tuple, with the type of the *Sob* subclass whose database table is to be joined and its alias
+            2. a 2/3/4-tuple, or a list of 2/3/4-tuples, informs on the *ON* fragment conditions:
+                - the first attribute, as a string or a *StrEnum* instance
+                - the second attribute, as a string or a *StrEnum* instance
+                - the operation ("=", "!=", "<=", or ">=", defaults to "=")
+                - the connector to the next condition ("and" or "or", defaults to "and")
+            3. the third element is the type of the join ("inner", "full", "left", "right", defaults to "inner")
 
         Selection criteria may be specified in *where_clause*, and/or by key-value pairs in *where_data*,
         which would be concatenated by the *AND* logical connector. Care should be exercised if *where_clause*
@@ -1094,7 +1181,7 @@ class PySob:
         :param db_engine: the reference database engine (uses the default engine, if not provided)
         :param db_conn: optional connection to use (obtains a new one, if not provided)
         :param committable: whether to commit the database operations upon errorless completion
-        :param errors: incidental error messages
+        :param errors: incidental error messages (might be non-empty)
         :return: a list with the objects instantiated, *[]* on empty result, or *None* if error
         """
         # inicialize the return variable
@@ -1107,22 +1194,25 @@ class PySob:
         # obtain the invoking class
         cls: type[Sob] = PySob.__get_invoking_class(errors=errors)
 
-        if not errors:
+        if cls:
             cls_name: str = f"{cls.__module__}.{cls.__qualname__}"
             logger: Logger = sob_loggers.get(cls_name)
 
+            # obtain the aliases map
+            aliases: dict[str, str] = PySob.__build_aliases_map(subcls=cls,
+                                                                alias=alias,
+                                                                joins=joins)
             # build the FROM clause
-            from_clause: str = PySob.__build_from_clause(cls=cls,
-                                                         alias=alias,
+            from_clause: str = PySob.__build_from_clause(subcls=cls,
+                                                         aliases=aliases,
                                                          joins=joins)
             # build the attributes list
-            attrs: list[str] = []
-            for attr in sob_db_columns.get(cls_name):
-                if alias:
-                    attr = f"{alias}.{attr}"
-                attrs.append(attr)
+            alias: str = aliases.get(cls.__qualname__)
+            attrs: list[str] = [f"{alias}.{attr}" for attr in sob_db_columns.get(cls_name)]
 
             # retrieve the data
+            where_data = PySob.__add_aliases(attrs=where_data,
+                                             aliases=aliases)
             sel_stmt: str = f"SELECT DISTINCT {', '.join(attrs)} FROM {from_clause}"
             recs: list[tuple[int | str]] = db_select(sel_stmt=sel_stmt,
                                                      where_clause=where_clause,
@@ -1138,7 +1228,7 @@ class PySob:
                                                      committable=committable,
                                                      errors=errors,
                                                      logger=logger)
-            if not errors:
+            if recs is not None:
                 # build the objects list
                 objs: list[Sob] = []
                 for rec in recs:
@@ -1149,14 +1239,12 @@ class PySob:
                     sob.set(data=data)
                     objs.append(sob)
 
-                if __references and objs:
-                    PySob.__load_references(__references,
-                                            objs=objs,
-                                            db_engine=db_engine,
-                                            db_conn=db_conn,
-                                            committable=committable,
-                                            errors=errors)
-                if not errors:
+                if not __references or not objs or PySob.__load_references(__references,
+                                                                           objs=objs,
+                                                                           db_engine=db_engine,
+                                                                           db_conn=db_conn,
+                                                                           committable=committable,
+                                                                           errors=errors) is not None:
                     result = objs
 
         return result
@@ -1197,7 +1285,7 @@ class PySob:
         :param db_engine: the reference database engine (uses the default engine, if not provided)
         :param db_conn: optional connection to use (obtains a new one, if not provided)
         :param committable: whether to commit the database operations upon errorless completion
-        :param errors: incidental error messages
+        :param errors: incidental error messages (might be non-empty)
         :return: the number of deleted tuples, or *None* if error
         """
         # initialize the return variable
@@ -1210,7 +1298,7 @@ class PySob:
         # obtain the invoking class
         cls: type[Sob] = PySob.__get_invoking_class(errors=errors)
 
-        if not errors:
+        if cls:
             cls_name: str = f"{cls.__module__}.{cls.__qualname__}"
             logger: Logger = sob_loggers.get(cls_name)
             tbl_name: str = sob_db_specs[cls_name][0]
@@ -1252,7 +1340,7 @@ class PySob:
         :param db_engine: the reference database engine (uses the default engine, if not provided)
         :param db_conn: optional connection to use (obtains a new one, if not provided)
         :param committable: whether to commit the database operations upon errorless completion
-        :param errors: incidental error messages
+        :param errors: incidental error messages (might be non-empty)
         :return: the values of *return_cols*, the number of inserted tuples (0 ou 1), or *None* if error
         """
         # initialize the return variable
@@ -1264,8 +1352,9 @@ class PySob:
 
         # obtain the invoking class
         cls: type[Sob] = PySob.__get_invoking_class(errors=errors)
+
         # delete specified rows
-        if not errors:
+        if cls:
             cls_name: str = f"{cls.__module__}.{cls.__qualname__}"
             logger: Logger = sob_loggers.get(cls_name)
             tbl_name: str = sob_db_specs[cls_name][0]
@@ -1281,15 +1370,250 @@ class PySob:
                                logger=logger)
         return result
 
+    # noinspection PyPep8
+    @staticmethod
+    def add_aliases(attrs: list[str | StrEnum] |
+                           dict[str | StrEnum, Any] | None,
+                    errors: list[str] = None) -> list[str] | dict[str, Any] | None:
+        """
+        Add the appropriate database aliases to the names of the database attributes in *attrs*.
+
+        Aliases will be constructed with the uppercase letters of the *Sob* class name, concatenated
+        in the sequence that they appear, and then converted to lowercase. If a conflict arises, the
+        character "1" is appended.
+
+        :param attrs: the *list* or *dict* containing the database attributes
+        :param errors: incidental error messages (might be non-empty)
+        :return: the *list* or *dict* containing the aliased database attributes
+        """
+        # initialize the return variable
+        result: list[str] | dict[str, Any] | None = None
+
+        # obtain the invoking class
+        cls: type[Sob] = PySob.__get_invoking_class(errors=errors)
+
+        if cls:
+            # build the aliases map
+            aliases: dict[str, str] = {}
+            for attr in attrs:
+                if isinstance(attr, StrEnum):
+                    subcls_name: str = attr.__class__.__qualname__.rsplit(".", 1)[0]
+                    if subcls_name not in aliases:
+                        subcls_alias: str =  "".join([c for c in subcls_name if c.isupper()]).lower()
+                        while dict_has_value(source=aliases,
+                                             value=subcls_alias):
+                            subcls_alias += "1"
+                        aliases[subcls_name] = subcls_alias
+
+            # add the aliases
+            result = PySob.__add_aliases(attrs=attrs,
+                                         aliases=aliases)
+        return result
+
+    # noinspection PyPep8
+    @staticmethod
+    def build_from_clause(alias: str = None,
+                          joins: list[tuple[tuple[type[Sob], str] | type[Sob],
+                                            list[tuple[StrEnum, StrEnum,
+                                                 Literal["=", "!=", "<=", ">="]],
+                                                 Literal["and", "or"]],
+                                            Literal["inner", "full", "left", "right"]]] |
+                                 list[tuple] = None,
+                          errors: list[str] = None) -> str:
+        """
+        Build the query's *FROM* clause.
+
+        Optionally, *joins* holds a list of tuples specifying the table joins, with the following format:
+            1. the first element identifies the table and optionally, the corresponding alias to use:
+                - a singlet, with the type of the *Sob* subclass whose database table is to be joined, or
+                - a 2-tuple, with the type of the *Sob* subclass whose database table is to be joined and its alias
+            2. a 2/3/4-tuple, or a list of 2/3/4-tuples, informs on the *ON* fragment conditions:
+                - the first attribute, as a string or a *StrEnum* instance
+                - the second attribute, as a string or a *StrEnum* instance
+                - the operation ("=", "!=", "<=", or ">=", defaults to "=")
+                - the connector to the next condition ("and" or "or", defaults to "and")
+            3. the third element is the type of the join ("inner", "full", "left", "right", defaults to "inner")
+
+        :param alias: the alias for the main table
+        :param joins: the list of *JOIN* clauses
+        :param errors: incidental error messages (might be non-empty)
+        """
+        # initialize the return variable
+        result: str | None = None
+
+        # obtain the invoking class
+        cls: type[Sob] = PySob.__get_invoking_class(errors=errors)
+
+        if cls:
+            # obtain the aliases map
+            aliases: dict[str, str] = PySob.__build_aliases_map(subcls=cls,
+                                                                alias=alias,
+                                                                joins=joins)
+            # build the 'FROM' clause
+            result = PySob.__build_from_clause(subcls=cls,
+                                               aliases=aliases,
+                                               joins=joins)
+        return result
+
+    @staticmethod
+    def __add_alias(attr: str | StrEnum,
+                    aliases: dict[str, str]) -> str:
+        """
+        Add the appropriate database alias to *attr*.
+
+        :param attr: the database attribute
+        :param aliases: mapping of *Sob* subclasses to aliases
+        """
+        if isinstance(attr, StrEnum):
+            subcls_name: str = attr.__class__.__qualname__
+            attr_alias: str = aliases.get(subcls_name.rsplit(".", 1)[0], "")
+            if attr_alias:
+                attr_alias = attr_alias + "."
+            result: str = attr_alias + attr.value.lower()
+        else:
+            result: str = attr
+
+        return result
+
+    @staticmethod
+    def __add_aliases(attrs: list[str | StrEnum] | dict[str | StrEnum, Any] | None,
+                      aliases: dict[str, str]) -> list[str] | dict[str, Any] | None:
+        """
+        Add the appropriate database aliases to the names of the database attributes in *attrs*.
+
+        :param attrs: the *list* or *dict* containing the database attributes
+        :param aliases: mapping of *Sob* subclasses to aliases
+        :return: the *list* or *dict* containing the aliased database attributes
+        """
+        # initialize the return variable
+        result: list[str] | dict[str, Any] | None = None
+        if isinstance(attrs, list):
+            result: list[str] = []
+            for attr in attrs:
+                aliased_attr: str = PySob.__add_alias(attr=attr,
+                                                      aliases=aliases)
+                result.append(aliased_attr)
+        elif isinstance(attrs, dict):
+            result: dict[str, str] = {}
+            for attr, val in attrs.items():
+                aliased_attr: str = PySob.__add_alias(attr=attr,
+                                                      aliases=aliases)
+                result[aliased_attr] = val
+
+        return result
+
+    # noinspection PyPep8
+    @staticmethod
+    def __build_aliases_map(subcls: type[Sob],
+                            alias: str = None,
+                            joins: list[tuple[tuple[type[Sob], str] | type[Sob],
+                                              list[tuple[StrEnum, StrEnum,
+                                                   Literal["=", "!=", "<=", ">="]],
+                                                   Literal["and", "or"]],
+                                              Literal["inner", "full", "left", "right"]]] |
+                                   list[tuple] = None) -> dict[str, str]:
+        """
+        Map the *Sob* subclasses to database aliases.
+
+        Omitted aliases will be constructed with the uppercase letters of the *Sob* class name, concatenated
+        in the sequence that they appear, and then converted to lowercase. If a conflict arises, the character "1"
+        is appended.
+
+        :param subcls: the reference *Sob* subclass
+        :param alias: the alias for the main table
+        :param joins: the list of *JOIN* clauses
+        """
+        # determine the alias for the master table
+        if not alias:
+            alias = "".join([c for c in subcls.__qualname__ if c.isupper()]).lower()
+
+        # initialize the return variable
+        result: dict[str, str] = {subcls.__qualname__: alias}
+
+        # traverse the joins
+        for join in joins or []:
+            if isinstance(join[0], tuple):
+                join_cls: str = join[0][0].__qualname__
+                join_alias: str = join[0][1]
+            else:
+                join_cls: str = join[0].__qualname__
+                join_alias: str = "".join([c for c in join_cls if c.isupper()]).lower()
+            if join_cls not in result:
+                while dict_has_value(source=result,
+                                     value=join_alias):
+                    join_alias += "1"
+                result[join_cls] = join_alias
+
+        return result
+
+    # noinspection PyPep8
+    @staticmethod
+    def __build_from_clause(subcls: type[Sob],
+                            aliases: dict[str, str],
+                            joins: list[tuple[tuple[type[Sob], str] | type[Sob],
+                                              list[tuple[StrEnum, StrEnum,
+                                                   Literal["=", "!=", "<=", ">="]],
+                                                   Literal["and", "or"]],
+                                              Literal["inner", "full", "left", "right"]]] |
+                                   list[tuple] = None) -> str:
+        """
+        Build the query's *FROM* clause.
+
+        Optionally, *joins* holds a list of tuples specifying the table joins, with the following format:
+            1. the first element identifies the table and optionally, the corresponding alias to use:
+                - a singlet, with the type of the *Sob* subclass whose database table is to be joined, or
+                - a 2-tuple, with the type of the *Sob* subclass whose database table is to be joined and its alias
+            2. a 2/3/4-tuple, or a list of 2/3/4-tuples, informs on the *ON* fragment conditions:
+                - the first attribute, as a string or a *StrEnum* instance
+                - the second attribute, as a string or a *StrEnum* instance
+                - the operation ("=", "!=", "<=", or ">=", defaults to "=")
+                - the connector to the next condition ("and" or "or", defaults to "and")
+            3. the third element is the type of the join ("inner", "full", "left", "right", defaults to "inner")
+
+        :param subcls: the reference *Sob* subclass
+        :param aliases: mapping of *Sob* subclasses to aliases
+        :param joins: the list of *JOIN* clauses
+        """
+        # obtain the the fully-qualified name of the class type
+        cls_name: str = f"{subcls.__module__}.{subcls.__qualname__}"
+
+        # initialize the return variable
+        result: str = sob_db_specs[cls_name][0] + " AS " + aliases.get(subcls.__qualname__)
+
+        # traverse the joins
+        for join in joins or []:
+            if isinstance(join[0], tuple):
+                join_cls: str = f"{join[0][0].__module__}.{join[0][0].__qualname__}"
+            else:
+                join_cls: str = f"{join[0].__module__}.{join[0].__qualname__}"
+            table_name: str = sob_db_specs[join_cls][0]
+            join_alias: str = aliases.get(join_cls[join_cls.rindex(".")+1:])
+            join_mode: str = join[3].upper() if len(join) > 3 else "INNER"
+            result += f" {join_mode} JOIN {table_name} AS {join_alias} ON "
+
+            # traverse the mandatory 'ON' specs
+            on_specs: list[tuple] = join[1] if isinstance(join[1], list) else [join[1]]
+            for on_spec in on_specs:
+                op: str = on_spec[2] if len(on_spec) > 2 and on_spec[2] in ["=", "!=", "<=", ">="] else "="
+                result += (PySob.__add_alias(attr=on_spec[0],
+                                             aliases=aliases) + " " + op + " " +
+                           PySob.__add_alias(attr=on_spec[1],
+                                             aliases=aliases))
+                con: str = on_spec[-1].upper() if  len(on_spec) > 2 and on_spec[-1] in ["and", "or"] else "AND"
+                result += " " + con + " "
+            result = result[:-5] if result.endswith(" AND ") else result[:-4]
+
+        return result
+
     @staticmethod
     def __get_invoking_class(errors: list[str] = None,
                              logger: Logger = None) -> type[Sob] | None:
         """
         Retrieve the fully-qualified type of the subclass currently being accessed.
 
-        :param errors: incidental error messages
+        :param errors: incidental error messages (might be non-empty)
         :param logger: optional logger
-        :return: the fully-qualified type of the subclass currently being accessed
+        :return: the fully-qualified type of the subclass currently being accessed, or *None* if error
         :
         """
         # initialize the return variable
@@ -1352,10 +1676,32 @@ class PySob:
                           db_engine: DbEngine | None,
                           db_conn: Any | None,
                           committable: bool | None,
-                          errors: list[str]) -> None:
+                          errors: list[str]) -> bool | None:
+        """
+        Load the *SOB* references specified in *__references* from the database.
 
-        if SOB_MAX_THREADS > 1 and \
-                (len(objs) > 1 or (isinstance(__references, list) and len(__references) > 1)):
+        The targer database engine, specified or default, must have been previously configured.
+        The parameter *committable* is relevant only if *db_conn* is provided, and is otherwise ignored.
+        A rollback is always attempted, if an error occurs.
+
+        :param __references: the *SOB* references to load
+        :param db_engine: the reference database engine (uses the default engine, if not provided)
+        :param db_conn: optional connection to use (obtains a new one, if not provided)
+        :param committable: whether to commit the database operations upon errorless completion
+        :param errors: incidental error messages (might be non-empty)
+        :return: *True* if at least one references was load, *False* otherwise, or *None* if error
+        """
+        # make sure '__references' is a list
+        if not isinstance(__references, list):
+            __references = [__references]
+
+        # initialize the return variable
+        result: bool | None = len(objs) > 0 and len(__references) > 0
+
+        # iniialize a local errors list
+        curr_errors: list[str] = []
+
+        if SOB_MAX_THREADS > 1 and (len(objs) > 1 or len(__references) > 1):
             task_futures: list[Future] = []
             with ThreadPoolExecutor(max_workers=SOB_MAX_THREADS) as executor:
                 for obj in objs:
@@ -1364,11 +1710,11 @@ class PySob:
                         future: Future = executor.submit(obj.load_references,
                                                          reference,
                                                          db_engine=db_engine,
-                                                         errors=errors)
-                        if errors:
+                                                         errors=curr_errors)
+                        if curr_errors:
                             break
                         task_futures.append(future)
-                    if errors:
+                    if curr_errors:
                         break
 
             # wait for all task futures to complete, then shutdown down the executor
@@ -1380,34 +1726,13 @@ class PySob:
                                     db_engine=db_engine,
                                     db_conn=db_conn,
                                     committable=committable,
-                                    errors=errors)
-                if errors:
+                                    errors=curr_errors)
+                if curr_errors:
                     break
 
-    # noinspection PyPep8
-    @staticmethod
-    def __build_from_clause(alias: str,
-                            cls: type[Sob],
-                            joins: list[tuple[type[Sob] | str, str, str]] |
-                                   list[tuple[type[Sob] | str, str, str,
-                                              Literal["inner", "full", "left", "right"]]] | None) -> str:
-
-        # obtain the the fully-qualified name of the class type
-        cls_name: str = f"{cls.__module__}.{cls.__qualname__}"
-
-        # establish the main query table
-        result: str = sob_db_specs[cls_name][0]
-        if alias:
-            result += " AS " + alias
-
-        # build the joins
-        for join in joins or []:
-            if isinstance(join[0], str):
-                target: str = join[0]
-            else:
-                name: str = f"{join[0].__module__}.{join[0].__qualname__}"
-                target: str = sob_db_specs[name][0]
-            mode: str = join[3].upper() if len(join) > 3 else "INNER"
-            result += f" {mode} JOIN {target} AS {join[1]} ON {join[2]}"
+        if curr_errors:
+            result = None
+            if isinstance(errors, list):
+                errors.extend(curr_errors)
 
         return result
