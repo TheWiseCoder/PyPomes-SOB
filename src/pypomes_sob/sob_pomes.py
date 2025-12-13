@@ -701,8 +701,7 @@ class PySob:
 
     # noinspection PyPep8
     @staticmethod
-    def count(alias: str = None,
-              joins: list[tuple[tuple[type[Sob], str] | type[Sob],
+    def count(joins: list[tuple[tuple[type[Sob], str] | type[Sob],
                                 list[tuple[StrEnum, StrEnum,
                                      Literal["=", "!=", "<=", ">="]],
                                      Literal["and", "or"]],
@@ -741,7 +740,6 @@ class PySob:
         The parameter *committable* is relevant only if *db_conn* is provided, and is otherwise ignored.
         A rollback is always attempted, if an error occurs.
 
-        :param alias: optional alias for the database table in the *SELECT* statement
         :param joins: optional *JOIN* clauses to use
         :param count_clause: optional parameters in the *COUNT* clause (defaults to 'COUNT(*)')
         :param where_clause: optional criteria for tuple selection
@@ -769,7 +767,6 @@ class PySob:
 
             # obtain the aliases map
             aliases: dict[str, str] = PySob.__build_aliases_map(subcls=cls,
-                                                                alias=alias,
                                                                 joins=joins)
             # build the FROM clause
             from_clause: str = PySob.__build_from_clause(subcls=cls,
@@ -792,8 +789,7 @@ class PySob:
 
     # noinspection PyPep8
     @staticmethod
-    def exists(alias: str = None,
-               joins: list[tuple[tuple[type[Sob], str] | type[Sob],
+    def exists(joins: list[tuple[tuple[type[Sob], str] | type[Sob],
                                  list[tuple[StrEnum, StrEnum,
                                       Literal["=", "!=", "<=", ">="]],
                                       Literal["and", "or"]],
@@ -833,7 +829,6 @@ class PySob:
         The parameter *committable* is relevant only if *db_conn* is provided, and is otherwise ignored.
         A rollback is always attempted, if an error occurs.
 
-        :param alias: optional alias for the database table in the *SELECT* statement
         :param joins: optional *JOIN* clauses to use
         :param where_clause: optional criteria for tuple selection
         :param where_vals: values to be associated with the selection criteria
@@ -862,7 +857,6 @@ class PySob:
 
             # obtain the aliases map
             aliases: dict[str, str] = PySob.__build_aliases_map(subcls=cls,
-                                                                alias=alias,
                                                                 joins=joins)
             # build the FROM clause
             from_clause: str = PySob.__build_from_clause(subcls=cls,
@@ -887,7 +881,6 @@ class PySob:
     # noinspection PyPep8
     @staticmethod
     def get_values(attrs: tuple[str],
-                   alias: str = None,
                    joins: list[tuple[tuple[type[Sob], str] | type[Sob],
                                      list[tuple[StrEnum, StrEnum,
                                           Literal["=", "!=", "<=", ">="]],
@@ -897,7 +890,8 @@ class PySob:
                    where_clause: str = None,
                    where_vals: tuple = None,
                    where_data: dict[str, Any] = None,
-                   orderby_clause: str = None,
+                   orderby_clause: list[tuple[StrEnum | str, Literal["asc", "desc"]]] |
+                                   tuple[StrEnum | str, Literal["asc", "desc"]] | StrEnum | str = None,
                    min_count: int = None,
                    max_count: int = None,
                    offset_count: int = None,
@@ -927,6 +921,10 @@ class PySob:
         break for a list of values containing only 1 element. The safe way to specify *IN* directives is
         to add them to *where_data*, as the specifics of each DB flavor will then be properly dealt with.
 
+        The sort order of the query results may be specified by *orderby_clause*, which might be:
+            - a *str* or *StrEnum* indicating the attribute and the default sort direction *asc*
+            - a tuple or a list of tuples, each indicating an attribute and its sort direction (defaults to *asc*)
+
         If not positive integers, *min_count*, *max_count*, *offset_count*, and *limit_count* are ignored.
         If both *min_count* and *max_count* are specified with equal values, then exactly that number of
         tuples must be returned by the query. The parameter *offset_count* is used to offset the retrieval
@@ -938,7 +936,6 @@ class PySob:
         A rollback is always attempted, if an error occurs.
 
         :param attrs: one or more attributes whose values to retrieve
-        :param alias: optional alias for the database table in the *SELECT* statement
         :param joins: optional *JOIN* clauses to use
         :param where_clause: optional criteria for tuple selection
         :param where_vals: values to be associated with the selection criteria
@@ -970,7 +967,6 @@ class PySob:
 
             # obtain the aliases map
             aliases: dict[str, str] = PySob.__build_aliases_map(subcls=cls,
-                                                                alias=alias,
                                                                 joins=joins)
             # build the FROM clause
             from_clause: str = PySob.__build_from_clause(subcls=cls,
@@ -979,8 +975,13 @@ class PySob:
             # build the aliased attributes list
             aliased_attrs: list[str] = PySob.__add_aliases(attrs=attrs,
                                                            aliases=aliases)
+            # normalize the 'ORDER BY' clause
+            if orderby_clause:
+                orderby_clause = PySob.__normalize_orderby(orderby=orderby_clause)
+
             # retrieve the data
-            result = db_select(sel_stmt=f"SELECT DISTINCT {', '.join(aliased_attrs)} FROM {from_clause}",
+            sel_stmt: str = f"SELECT DISTINCT {', '.join(aliased_attrs)} FROM {from_clause}"
+            result = db_select(sel_stmt=sel_stmt,
                                where_clause=where_clause,
                                where_vals=where_vals,
                                where_data=where_data,
@@ -1000,7 +1001,6 @@ class PySob:
     @staticmethod
     def get_single(__references: type[Sob | list[Sob]] | list[type[Sob | list[Sob]]] = None,
                    /,
-                   alias: str = None,
                    joins: list[tuple[tuple[type[Sob], str] | type[Sob],
                                      list[tuple[StrEnum, StrEnum,
                                           Literal["=", "!=", "<=", ">="]],
@@ -1043,7 +1043,6 @@ class PySob:
         A rollback is always attempted, if an error occurs.
 
         :param __references: the *SOB* references to load at object instantiation time
-        :param alias: optional alias for the database table in the *SELECT* statement
         :param joins: optional *JOIN* clauses to use
         :param where_clause: optional criteria for tuple selection
         :param where_vals: values to be associated with the selection criteria
@@ -1070,7 +1069,6 @@ class PySob:
 
             # obtain the aliases map
             aliases: dict[str, str] = PySob.__build_aliases_map(subcls=cls,
-                                                                alias=alias,
                                                                 joins=joins)
             # build the FROM clause
             from_clause: str = PySob.__build_from_clause(subcls=cls,
@@ -1117,7 +1115,6 @@ class PySob:
     @staticmethod
     def retrieve(__references: type[Sob | list[Sob]] | list[type[Sob | list[Sob]]] = None,
                  /,
-                 alias: str = None,
                  joins: list[tuple[tuple[type[Sob], str] | type[Sob],
                                    list[tuple[StrEnum, StrEnum,
                                         Literal["=", "!=", "<=", ">="]],
@@ -1127,7 +1124,8 @@ class PySob:
                  where_clause: str = None,
                  where_vals: tuple = None,
                  where_data: dict[str, Any] = None,
-                 orderby_clause: str = None,
+                 orderby_clause: list[tuple[StrEnum | str, Literal["asc", "desc"]]] |
+                                 tuple[StrEnum | str, Literal["asc", "desc"]] | StrEnum | str = None,
                  min_count: int = None,
                  max_count: int = None,
                  offset_count: int = None,
@@ -1157,6 +1155,10 @@ class PySob:
         only 1 element. The safe way to specify *IN* directives is to add them to *where_data*, as the specifics
         of each DB flavor will then be properly dealt with.
 
+        The sort order of the query results may be specified by *orderby_clause*, which might be:
+            - a *str* or *StrEnum* indicating the attribute and the default sort direction *asc*
+            - a tuple or a list of tuples, each indicating an attribute and its sort direction (defaults to *asc*)
+
         If not positive integers, *min_count*, *max_count*, *offset_count*, and *limit_count* are ignored.
         If both *min_count* and *max_count* are specified with equal values, then exactly that number of
         tuples must be returned by the query. The parameter *offset_count* is used to offset the retrieval
@@ -1168,7 +1170,6 @@ class PySob:
         A rollback is always attempted, if an error occurs.
 
         :param __references: the *SOB* references to load at object instantiation time
-        :param alias: optional alias for the database table in the *SELECT* statement
         :param joins: optional *JOIN* clauses to use
         :param where_clause: optional criteria for tuple selection
         :param where_vals: values to be associated with the selection criteria
@@ -1200,7 +1201,6 @@ class PySob:
 
             # obtain the aliases map
             aliases: dict[str, str] = PySob.__build_aliases_map(subcls=cls,
-                                                                alias=alias,
                                                                 joins=joins)
             # build the FROM clause
             from_clause: str = PySob.__build_from_clause(subcls=cls,
@@ -1209,6 +1209,10 @@ class PySob:
             # build the attributes list
             alias: str = aliases.get(cls.__qualname__)
             attrs: list[str] = [f"{alias}.{attr}" for attr in sob_db_columns.get(cls_name)]
+
+            # normalize the 'ORDER BY' clause
+            if orderby_clause:
+                orderby_clause = PySob.__normalize_orderby(orderby=orderby_clause)
 
             # retrieve the data
             where_data = PySob.__add_aliases(attrs=where_data,
@@ -1412,8 +1416,7 @@ class PySob:
 
     # noinspection PyPep8
     @staticmethod
-    def build_from_clause(alias: str = None,
-                          joins: list[tuple[tuple[type[Sob], str] | type[Sob],
+    def build_from_clause(joins: list[tuple[tuple[type[Sob], str] | type[Sob],
                                             list[tuple[StrEnum, StrEnum,
                                                  Literal["=", "!=", "<=", ">="]],
                                                  Literal["and", "or"]],
@@ -1434,7 +1437,6 @@ class PySob:
                 - the connector to the next condition ("and" or "or", defaults to "and")
             3. the third element is the type of the join ("inner", "full", "left", "right", defaults to "inner")
 
-        :param alias: the alias for the main table
         :param joins: the list of *JOIN* clauses
         :param errors: incidental error messages (might be non-empty)
         """
@@ -1447,7 +1449,6 @@ class PySob:
         if cls:
             # obtain the aliases map
             aliases: dict[str, str] = PySob.__build_aliases_map(subcls=cls,
-                                                                alias=alias,
                                                                 joins=joins)
             # build the 'FROM' clause
             result = PySob.__build_from_clause(subcls=cls,
@@ -1457,7 +1458,7 @@ class PySob:
 
     @staticmethod
     def __add_alias(attr: str | StrEnum,
-                    aliases: dict[str, str]) -> str:
+                    aliases: dict[str, str] = None) -> str:
         """
         Add the appropriate database alias to *attr*.
 
@@ -1465,10 +1466,13 @@ class PySob:
         :param aliases: mapping of *Sob* subclasses to aliases
         """
         if isinstance(attr, StrEnum):
-            subcls_name: str = attr.__class__.__qualname__
-            attr_alias: str = aliases.get(subcls_name.rsplit(".", 1)[0], "")
-            if attr_alias:
-                attr_alias = attr_alias + "."
+            subcls_name: str = attr.__class__.__qualname__.rsplit(".", 1)[0]
+            if aliases is None:
+                attr_alias: str = "".join([c for c in subcls_name if c.isupper()]).lower() + "."
+            else:
+                attr_alias: str = aliases.get(subcls_name, "")
+                if attr_alias:
+                    attr_alias = attr_alias + "."
             result: str = attr_alias + attr.value.lower()
         else:
             result: str = attr
@@ -1505,7 +1509,6 @@ class PySob:
     # noinspection PyPep8
     @staticmethod
     def __build_aliases_map(subcls: type[Sob],
-                            alias: str = None,
                             joins: list[tuple[tuple[type[Sob], str] | type[Sob],
                                               list[tuple[StrEnum, StrEnum,
                                                    Literal["=", "!=", "<=", ">="]],
@@ -1520,12 +1523,10 @@ class PySob:
         is appended.
 
         :param subcls: the reference *Sob* subclass
-        :param alias: the alias for the main table
         :param joins: the list of *JOIN* clauses
         """
         # determine the alias for the master table
-        if not alias:
-            alias = "".join([c for c in subcls.__qualname__ if c.isupper()]).lower()
+        alias: str = "".join([c for c in subcls.__qualname__ if c.isupper()]).lower()
 
         # initialize the return variable
         result: dict[str, str] = {subcls.__qualname__: alias}
@@ -1604,6 +1605,36 @@ class PySob:
             result = result[:-5] if result.endswith(" AND ") else result[:-4]
 
         return result
+
+    # noinspection PyPep8
+    @staticmethod
+    def __normalize_orderby(orderby: list[tuple[StrEnum | str, Literal["asc", "desc"]]] |
+                                     tuple[StrEnum | str, Literal["asc", "desc"]] | StrEnum | str = None) -> str:
+        """
+        Normalize the *ORDER BY* query clause, by adding aliases and converting to a *str*.
+
+        :param orderby: the query retrieval order
+        :return: the normalized *ORDER BY* clause as *str*, with added aliases
+        """
+        # initialize the return variable
+        result: str = ""
+
+        # make sure 'orderby' is a list
+        orderby = orderby if isinstance(orderby, list) else [orderby]
+
+        # traverse the parameter elements
+        for item in orderby:
+            attr: str | StrEnum
+            dirc: str
+            if isinstance(item, tuple):
+                attr = item[0]
+                dirc = item[1].upper() if len(item) > 1 and item[1] in ["asc", "desc"] else "ASC"
+            else:
+                attr = item
+                dirc = "ASC"
+            result += PySob.__add_alias(attr=attr) + " " + dirc + ", "
+
+        return result[:-2]
 
     @staticmethod
     def __get_invoking_class(errors: list[str] = None,
