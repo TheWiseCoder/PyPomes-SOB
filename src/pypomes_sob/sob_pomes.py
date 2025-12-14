@@ -1498,13 +1498,13 @@ class PySob:
                                             list[tuple[StrEnum, StrEnum,
                                                        Literal["=", "<>", "<=", ">="] | None,
                                                        Literal["and", "or"] | None]],
-                                            Literal["inner", "full", "left", "right"] | None]] |
-                                 list[tuple] = None,
+                                            Literal["inner", "full", "left", "right"] | None]] | list[tuple],
+                          classes: list[type[Sob]] = None,
                           errors: list[str] = None) -> str:
         """
         Build the query's *FROM* clause.
 
-        Optionally, *joins* holds a list of tuples specifying the table joins, with the following format:
+        The parameter *joins* holds a list of tuples specifying the table joins, with the following format:
             1. the first element in the tuple identifies the table:
                 - a singlet, with the type of the *Sob* subclass whose database table is to be joined
             2. a 2/3/4-tuple, or a list of 2/3/4-tuples, informs on the *ON* fragment conditions:
@@ -1515,6 +1515,7 @@ class PySob:
             3. the third element is the type of the join ("inner", "full", "left", "right", defaults to "inner")
 
         :param joins: the list of *JOIN* clauses
+        :param classes: optional list of *SOB* subclasses to assist with alias determination
         :param errors: incidental error messages (might be a non-empty list)
         :return: the *FROM* clause containing the *JOIN*s
         """
@@ -1527,7 +1528,8 @@ class PySob:
         if cls:
             # obtain the aliases map
             aliases: dict[str, str] = PySob.__build_aliases_map(subcls=cls,
-                                                                joins=joins)
+                                                                joins=joins,
+                                                                classes=classes)
             # build the 'FROM' clause
             result = PySob.__build_from_clause(subcls=cls,
                                                aliases=aliases,
@@ -1599,8 +1601,8 @@ class PySob:
                                               list[tuple[StrEnum, StrEnum,
                                                          Literal["=", "<>", "<=", ">="] | None,
                                                          Literal["and", "or"] | None]],
-                                              Literal["inner", "full", "left", "right"] | None]] |
-                                   list[tuple]) -> dict[str, str]:
+                                              Literal["inner", "full", "left", "right"] | None]] | list[tuple],
+                            classes: list[type[Sob]] = None) -> dict[str, str]:
         """
         Map the *Sob* subclasses to database aliases.
 
@@ -1616,6 +1618,8 @@ class PySob:
 
         :param subcls: the reference *Sob* subclass
         :param joins: the list of *JOIN* clauses
+        :param classes: optional list of *Sob* subclasses to assist with alias determination
+        :return: the mapping of aliases to *Sob* subclasses
         """
         # initialize the return variable
         result: dict[str, str] = {}
@@ -1623,6 +1627,10 @@ class PySob:
         # register the alias for the master subclass
         PySob.__register_class_alias(subcls=subcls,
                                      aliases=result)
+        # register the subclasses
+        for cls in classes or []:
+            PySob.__register_class_alias(subcls=cls,
+                                         aliases=result)
 
         # traverse the joins (only the first element in each tuple is relevant)
         for join in joins or []:
