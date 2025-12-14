@@ -68,7 +68,7 @@ class PySob:
         :param db_engine: the reference database engine (uses the default engine, if not provided)
         :param db_conn: optional connection to use (obtains a new one, if not provided)
         :param committable: whether to commit the database operations upon errorless completion
-        :param errors: incidental error messages (might be non-empty)
+        :param errors: incidental error messages (might be a non-empty list)
         """
         # maps to the entity's PK in its DB table (returned on INSERT operations)
         self.id: int | str | None = None
@@ -105,7 +105,7 @@ class PySob:
         :param db_engine: the reference database engine (uses the default engine, if not provided)
         :param db_conn: optional connection to use (obtains a new one, if not provided)
         :param committable: whether to commit the database operations upon errorless completion
-        :param errors: incidental error messages (might be non-empty)
+        :param errors: incidental error messages (might be a non-empty list)
         :return: *True* if the operation was successful, or *False* otherwise
         """
         # prepare data for INSERT
@@ -159,7 +159,7 @@ class PySob:
         :param db_engine: the reference database engine (uses the default engine, if not provided)
         :param db_conn: optional connection to use (obtains a new one, if not provided)
         :param committable: whether to commit the database operations upon errorless completion
-        :param errors: incidental error messages (might be non-empty)
+        :param errors: incidental error messages (might be a non-empty list)
         :return: *True* if the operation was successful, or *False* otherwise
         """
         # prepare data for UPDATE
@@ -204,7 +204,7 @@ class PySob:
         :param db_engine: the reference database engine (uses the default engine, if not provided)
         :param db_conn: optional connection to use (obtains a new one, if not provided)
         :param committable: whether to commit the database operations upon errorless completion
-        :param errors: incidental error messages (might be non-empty)
+        :param errors: incidental error messages (might be a non-empty list)
         :return: *True* if the operation was successful, or *False* otherwise
         """
         # declare the return variale
@@ -237,7 +237,7 @@ class PySob:
         :param db_engine: the reference database engine (uses the default engine, if not provided)
         :param db_conn: optional connection to use (obtains a new one, if not provided)
         :param committable: whether to commit the database operations upon errorless completion
-        :param errors: incidental error messages (might be non-empty)
+        :param errors: incidental error messages (might be a non-empty list)
         :return: the number of deleted tuples, or *None* if error
         """
         cls_name: str = f"{self.__class__.__module__}.{self.__class__.__qualname__}"
@@ -382,7 +382,7 @@ class PySob:
         :param db_engine: the reference database engine (uses the default engine, if not provided)
         :param db_conn: optional connection to use (obtains a new one, if not provided)
         :param committable: whether to commit the database operations upon errorless completion
-        :param errors: incidental error messages (might be non-empty)
+        :param errors: incidental error messages (might be a non-empty list)
         :return: *True* the object's current state is persisted, *False* otherwise, or *None* if error
         """
         # initialize the return variable
@@ -437,7 +437,7 @@ class PySob:
         :param db_engine: the reference database engine (uses the default engine, if not provided)
         :param db_conn: optional connection to use (obtains a new one, if not provided)
         :param committable: whether to commit the database operations upon errorless completion
-        :param errors: incidental error messages (might be non-empty)
+        :param errors: incidental error messages (might be a non-empty list)
         :return: *True* if the operation was successful, or *False* otherwise
         """
         # initialize the return variable
@@ -569,7 +569,7 @@ class PySob:
         :param db_engine: the reference database engine (uses the default engine, if not provided)
         :param db_conn: optional connection to use (obtains a new one, if not provided)
         :param committable: whether to commit the database operations upon errorless completion
-        :param errors: incidental error messages (might be non-empty)
+        :param errors: incidental error messages (might be a non-empty list)
         """
         cls_name: str = f"{self.__class__.__module__}.{self.__class__.__qualname__}"
         logger: Logger = sob_loggers.get(cls_name)
@@ -604,7 +604,7 @@ class PySob:
         :param db_engine: the reference database engine (uses the default engine, if not provided)
         :param db_conn: optional connection to use (obtains a new one, if not provided)
         :param committable: whether to commit the database operations upon errorless completion
-        :param errors: incidental error messages (might be non-empty)
+        :param errors: incidental error messages (might be a non-empty list)
         """
         cls_name: str = f"{self.__class__.__module__}.{self.__class__.__qualname__}"
         logger: Logger = sob_loggers.get(cls_name)
@@ -699,18 +699,20 @@ class PySob:
 
         return result
 
-    # noinspection PyPep8
     @staticmethod
-    def count(joins: list[tuple[tuple[type[Sob], str] | type[Sob],
+    def count(joins: list[tuple[type[Sob],
                                 list[tuple[StrEnum, StrEnum,
-                                     Literal["=", "!=", "<=", ">="]],
-                                     Literal["and", "or"]],
-                                Literal["inner", "full", "left", "right"]]] |
-                     list[tuple] = None,
+                                           Literal["=", "<>", "<=", ">="] | None,
+                                           Literal["and", "or"] | None]],
+                                Literal["inner", "full", "left", "right"] | None]] | list[tuple] = None,
               count_clause: str = None,
               where_clause: str = None,
               where_vals: tuple = None,
-              where_data: dict[StrEnum | str, Any] = None,
+              where_data: dict[StrEnum | tuple |
+                               tuple[StrEnum,
+                                     Literal["=", ">", "<", ">=", "<=",
+                                             "<>", "in", "like", "between"] | None,
+                                     Literal["and", "or"] | None], Any] = None,
               db_engine: DbEngine = None,
               db_conn: Any = None,
               committable: bool = None,
@@ -719,22 +721,30 @@ class PySob:
         Count the occurrences of tuples in the corresponding database table, as per the criteria provided.
 
         Optionally, *joins* holds a list of tuples specifying the table joins, with the following format:
-            1. the first element identifies the table and optionally, the corresponding alias to use:
-                - a singlet, with the type of the *Sob* subclass whose database table is to be joined, or
-                - a 2-tuple, with the type of the *Sob* subclass whose database table is to be joined and its alias
+            1. the first element identifies the table:
+                - a singlet, with the type of the *Sob* subclass whose database table is to be joined
             2. a 2/3/4-tuple, or a list of 2/3/4-tuples, informs on the *ON* fragment conditions:
                 - the first attribute, as a string or a *StrEnum* instance
                 - the second attribute, as a string or a *StrEnum* instance
-                - the operation ("=", "!=", "<=", or ">=", defaults to "=")
+                - the operation ("=", "<>", "<=", or ">=", defaults to "=")
                 - the connector to the next condition ("and" or "or", defaults to "and")
             3. the third element is the type of the join ("inner", "full", "left", "right", defaults to "inner")
 
-        Optionally, selection criteria may be specified in *where_clause*, or additionally by
-        key-value pairs in *where_data*, which would be concatenated by the *AND* logical connector.
-        Care should be exercised if *where_clause* contains *IN* directives. In PostgreSQL, the list of values
-        for an attribute with the *IN* directive must be contained in a specific tuple, and the operation will
-        break for a list of values containing only 1 element. The safe way to specify *IN* directives is
-        to add them to *where_data*, as the specifics of each DB flavor will then be properly dealt with.
+        Optionally, selection criteria may be specified in *where_clause* and *where_vals*, or additionally but
+        preferably, by key-value pairs in *where_data*. Care should be exercised if *where_clause* contains *IN*
+        directives. In PostgreSQL, the list of values for an attribute with the *IN* directive must be contained
+        in a specific tuple, and the operation will break for a list of values containing only 1 element.
+        The safe way to specify *IN* directives is to add them to *where_data*, as the specifics of each DB flavor
+        will then be properly dealt with.
+
+        The syntax specific to *where_data*'s key/value pairs is as follows:
+            1. *key*:
+                - an attribute (*StrEnum*, or *str* possibly aliased), or
+                - a 2/3-tuple with an attribute and the corresponding SQL comparison operation
+                  ("=", ">", "<", ">=", "<=", "<>", "in", "like", "between" - defaults to "="), followed
+                  by a SQL logical operator relating it to the next item ("and", "or" - defaults to "and")
+            2. *value*:
+                - a scalar, or a list, or an expression possibly containing other attribute(s)
 
         The targer database engine, specified or default, must have been previously configured.
         The parameter *committable* is relevant only if *db_conn* is provided, and is otherwise ignored.
@@ -748,7 +758,7 @@ class PySob:
         :param db_engine: the reference database engine (uses the default engine, if not provided)
         :param db_conn: optional connection to use (obtains a new one, if not provided)
         :param committable: whether to commit the database operations upon errorless completion
-        :param errors: incidental error messages (might be non-empty)
+        :param errors: incidental error messages (might be a non-empty list)
         :return: the number of tuples counted, or *None* if error
         """
         # inicialize the return variable
@@ -787,17 +797,19 @@ class PySob:
                               logger=logger)
         return result
 
-    # noinspection PyPep8
     @staticmethod
-    def exists(joins: list[tuple[tuple[type[Sob], str] | type[Sob],
+    def exists(joins: list[tuple[type[Sob],
                                  list[tuple[StrEnum, StrEnum,
-                                      Literal["=", "!=", "<=", ">="]],
-                                      Literal["and", "or"]],
-                                 Literal["inner", "full", "left", "right"]]] |
-                      list[tuple] = None,
+                                            Literal["=", "<>", "<=", ">="] | None,
+                                            Literal["and", "or"] | None]],
+                                 Literal["inner", "full", "left", "right"] | None]] | list[tuple] = None,
                where_clause: str = None,
                where_vals: tuple = None,
-               where_data: dict[str | StrEnum, Any] = None,
+               where_data: dict[StrEnum | tuple |
+                                tuple[StrEnum,
+                                      Literal["=", ">", "<", ">=", "<=",
+                                              "<>", "in", "like", "between"] | None,
+                                      Literal["and", "or"] | None], Any] = None,
                min_count: int = None,
                max_count: int = None,
                db_engine: DbEngine = None,
@@ -808,22 +820,30 @@ class PySob:
         Determine if at least one tuple exists in the database table, as per the criteria provided.
 
         Optionally, *joins* holds a list of tuples specifying the table joins, with the following format:
-            1. the first element identifies the table and optionally, the corresponding alias to use:
-                - a singlet, with the type of the *Sob* subclass whose database table is to be joined, or
-                - a 2-tuple, with the type of the *Sob* subclass whose database table is to be joined and its alias
+            1. the first element identifies the table:
+                - a singlet, with the type of the *Sob* subclass whose database table is to be joined
             2. a 2/3/4-tuple, or a list of 2/3/4-tuples, informs on the *ON* fragment conditions:
                 - the first attribute, as a string or a *StrEnum* instance
                 - the second attribute, as a string or a *StrEnum* instance
-                - the operation ("=", "!=", "<=", or ">=", defaults to "=")
+                - the operation ("=", "<>", "<=", or ">=", defaults to "=")
                 - the connector to the next condition ("and" or "or", defaults to "and")
             3. the third element is the type of the join ("inner", "full", "left", "right", defaults to "inner")
 
-        Optionally, selection criteria may be specified in *where_clause*, or additionally by
-        key-value pairs in *where_data*, which would be concatenated by the *AND* logical connector.
-        Care should be exercised if *where_clause* contains *IN* directives. In PostgreSQL, the list of values
-        for an attribute with the *IN* directive must be contained in a specific tuple, and the operation will
-        break for a list of values containing only 1 element. The safe way to specify *IN* directives is
-        to add them to *where_data*, as the specifics of each DB flavor will then be properly dealt with.
+        Optionally, selection criteria may be specified in *where_clause* and *where_vals*, or additionally but
+        preferably, by key-value pairs in *where_data*. Care should be exercised if *where_clause* contains *IN*
+        directives. In PostgreSQL, the list of values for an attribute with the *IN* directive must be contained
+        in a specific tuple, and the operation will break for a list of values containing only 1 element.
+        The safe way to specify *IN* directives is to add them to *where_data*, as the specifics of each DB flavor
+        will then be properly dealt with.
+
+        The syntax specific to *where_data*'s key/value pairs is as follows:
+            1. *key*:
+                - an attribute (*StrEnum*, or *str* possibly aliased), or
+                - a 2/3-tuple with an attribute and the corresponding SQL comparison operation
+                  ("=", ">", "<", ">=", "<=", "<>", "in", "like", "between" - defaults to "="), followed
+                  by a SQL logical operator relating it to the next item ("and", "or" - defaults to "and")
+            2. *value*:
+                - a scalar, or a list, or an expression possibly containing other attribute(s)
 
         The targer database engine, specified or default, must have been previously configured.
         The parameter *committable* is relevant only if *db_conn* is provided, and is otherwise ignored.
@@ -838,7 +858,7 @@ class PySob:
         :param db_engine: the reference database engine (uses the default engine, if not provided)
         :param db_conn: optional connection to use (obtains a new one, if not provided)
         :param committable: whether to commit the database operations upon errorless completion
-        :param errors: incidental error messages (might be non-empty)
+        :param errors: incidental error messages (might be a non-empty list)
         :return: *True* if the criteria for tuple existence were met, *False* otherwise, or *None* if error
         """
         # inicialize the return variable
@@ -881,17 +901,21 @@ class PySob:
     # noinspection PyPep8
     @staticmethod
     def get_values(attrs: tuple[str],
-                   joins: list[tuple[tuple[type[Sob], str] | type[Sob],
+                   joins: list[tuple[type[Sob],
                                      list[tuple[StrEnum, StrEnum,
-                                          Literal["=", "!=", "<=", ">="]],
-                                          Literal["and", "or"]],
-                                     Literal["inner", "full", "left", "right"]]] |
-                          list[tuple] = None,
+                                                Literal["=", "<>", "<=", ">="] | None,
+                                                Literal["and", "or"] | None]],
+                                     Literal["inner", "full", "left", "right"] | None]] | list[tuple] = None,
                    where_clause: str = None,
                    where_vals: tuple = None,
-                   where_data: dict[str, Any] = None,
-                   orderby_clause: list[tuple[StrEnum | str, Literal["asc", "desc"]]] |
-                                   tuple[StrEnum | str, Literal["asc", "desc"]] | StrEnum | str = None,
+                   where_data: dict[StrEnum | tuple |
+                                    tuple[StrEnum,
+                                          Literal["=", ">", "<", ">=", "<=",
+                                                  "<>", "in", "like", "between"] | None,
+                                          Literal["and", "or"] | None], Any] = None,
+                   orderby_clause: StrEnum |
+                                   tuple[StrEnum, Literal["asc", "desc"] | None] |
+                                   list[StrEnum | tuple[StrEnum, Literal["asc", "desc"] | None]] = None,
                    min_count: int = None,
                    max_count: int = None,
                    offset_count: int = None,
@@ -904,25 +928,33 @@ class PySob:
         Retrieve the values of *attrs* from the database, as per the criteria provided.
 
         Optionally, *joins* holds a list of tuples specifying the table joins, with the following format:
-            1. the first element identifies the table and optionally, the corresponding alias to use:
-                - a singlet, with the type of the *Sob* subclass whose database table is to be joined, or
-                - a 2-tuple, with the type of the *Sob* subclass whose database table is to be joined and its alias
+            1. the first element identifies the table:
+                - a singlet, with the type of the *Sob* subclass whose database table is to be joined
             2. a 2/3/4-tuple, or a list of 2/3/4-tuples, informs on the *ON* fragment conditions:
                 - the first attribute, as a string or a *StrEnum* instance
                 - the second attribute, as a string or a *StrEnum* instance
-                - the operation ("=", "!=", "<=", or ">=", defaults to "=")
+                - the operation ("=", "<>", "<=", or ">=", defaults to "=")
                 - the connector to the next condition ("and" or "or", defaults to "and")
             3. the third element is the type of the join ("inner", "full", "left", "right", defaults to "inner")
 
-        Selection criteria may be specified in *where_clause*, or additionally by
-        key-value pairs in *where_data*, which would be concatenated by the *AND* logical connector.
-        Care should be exercised if *where_clause* contains *IN* directives. In PostgreSQL, the list of values
-        for an attribute with the *IN* directive must be contained in a specific tuple, and the operation will
-        break for a list of values containing only 1 element. The safe way to specify *IN* directives is
-        to add them to *where_data*, as the specifics of each DB flavor will then be properly dealt with.
+        Optionally, selection criteria may be specified in *where_clause* and *where_vals*, or additionally but
+        preferably, by key-value pairs in *where_data*. Care should be exercised if *where_clause* contains *IN*
+        directives. In PostgreSQL, the list of values for an attribute with the *IN* directive must be contained
+        in a specific tuple, and the operation will break for a list of values containing only 1 element.
+        The safe way to specify *IN* directives is to add them to *where_data*, as the specifics of each DB flavor
+        will then be properly dealt with.
+
+        The syntax specific to *where_data*'s key/value pairs is as follows:
+            1. *key*:
+                - an attribute (*StrEnum*, or *str* possibly aliased), or
+                - a 2/3-tuple with an attribute and the corresponding SQL comparison operation
+                  ("=", ">", "<", ">=", "<=", "<>", "in", "like", "between" - defaults to "="), followed
+                  by a SQL logical operator relating it to the next item ("and", "or" - defaults to "and")
+            2. *value*:
+                - a scalar, or a list, or an expression possibly containing other attribute(s)
 
         The sort order of the query results may be specified by *orderby_clause*, which might be:
-            - a *str* or *StrEnum* indicating the attribute and the default sort direction *asc*
+            - a *str* or *StrEnum* indicating the attribute and the default sort direction *asc*, or
             - a tuple or a list of tuples, each indicating an attribute and its sort direction (defaults to *asc*)
 
         If not positive integers, *min_count*, *max_count*, *offset_count*, and *limit_count* are ignored.
@@ -948,7 +980,7 @@ class PySob:
         :param db_engine: the reference database engine (uses the default engine, if not provided)
         :param db_conn: optional connection to use (obtains a new one, if not provided)
         :param committable: whether to commit the database operations upon errorless completion
-        :param errors: incidental error messages (might be non-empty)
+        :param errors: incidental error messages (might be a non-empty list)
         :return: a list containing tuples with the values retrieved, *[]* on empty result, or *None* if error
         """
         # inicialize the return variable
@@ -997,19 +1029,21 @@ class PySob:
                                logger=logger)
         return result
 
-    # noinspection PyPep8
     @staticmethod
     def get_single(__references: type[Sob | list[Sob]] | list[type[Sob | list[Sob]]] = None,
                    /,
-                   joins: list[tuple[tuple[type[Sob], str] | type[Sob],
+                   joins: list[tuple[type[Sob],
                                      list[tuple[StrEnum, StrEnum,
-                                          Literal["=", "!=", "<=", ">="]],
-                                          Literal["and", "or"]],
-                                     Literal["inner", "full", "left", "right"]]] |
-                          list[tuple] = None,
+                                                Literal["=", "<>", "<=", ">="] | None,
+                                                Literal["and", "or"] | None]],
+                                     Literal["inner", "full", "left", "right"] | None]] | list[tuple] = None,
                    where_clause: str = None,
                    where_vals: tuple = None,
-                   where_data: dict[str, Any] = None,
+                   where_data: dict[StrEnum | tuple |
+                                    tuple[StrEnum,
+                                          Literal["=", ">", "<", ">=", "<=",
+                                                  "<>", "in", "like", "between"] | None,
+                                          Literal["and", "or"] | None], Any] = None,
                    db_engine: DbEngine = None,
                    db_conn: Any = None,
                    committable: bool = None,
@@ -1018,22 +1052,30 @@ class PySob:
         Retrieve the single instance of the *SOB* object from the database, as per the criteria provided.
 
         Optionally, *joins* holds a list of tuples specifying the table joins, with the following format:
-            1. the first element identifies the table and optionally, the corresponding alias to use:
-                - a singlet, with the type of the *Sob* subclass whose database table is to be joined, or
-                - a 2-tuple, with the type of the *Sob* subclass whose database table is to be joined and its alias
+            1. the first element identifies the table:
+                - a singlet, with the type of the *Sob* subclass whose database table is to be joined
             2. a 2/3/4-tuple, or a list of 2/3/4-tuples, informs on the *ON* fragment conditions:
                 - the first attribute, as a string or a *StrEnum* instance
                 - the second attribute, as a string or a *StrEnum* instance
-                - the operation ("=", "!=", "<=", or ">=", defaults to "=")
+                - the operation ("=", "<>", "<=", or ">=", defaults to "=")
                 - the connector to the next condition ("and" or "or", defaults to "and")
             3. the third element is the type of the join ("inner", "full", "left", "right", defaults to "inner")
 
-        Selection criteria are specified in *where_clause*, and/or by key-value pairs in *where_data*,
-        which would be concatenated by the *AND* logical connector. Care should be exercised if *where_clause*
-        contains *IN* directives. In PostgreSQL, the list of values for an attribute with the *IN* directive
-        must be contained in a specific tuple, and the operation will break for a list of values containing
-        only 1 element. The safe way to specify *IN* directives is to add them to *where_data*, as the specifics
-        of each DB flavor will then be properly dealt with.
+        Optionally, selection criteria may be specified in *where_clause* and *where_vals*, or additionally but
+        preferably, by key-value pairs in *where_data*. Care should be exercised if *where_clause* contains *IN*
+        directives. In PostgreSQL, the list of values for an attribute with the *IN* directive must be contained
+        in a specific tuple, and the operation will break for a list of values containing only 1 element.
+        The safe way to specify *IN* directives is to add them to *where_data*, as the specifics of each DB flavor
+        will then be properly dealt with.
+
+        The syntax specific to *where_data*'s key/value pairs is as follows:
+            1. *key*:
+                - an attribute (*StrEnum*, or *str* possibly aliased), or
+                - a 2/3-tuple with an attribute and the corresponding SQL comparison operation
+                  ("=", ">", "<", ">=", "<=", "<>", "in", "like", "between" - defaults to "="), followed
+                  by a SQL logical operator relating it to the next item ("and", "or" - defaults to "and")
+            2. *value*:
+                - a scalar, or a list, or an expression possibly containing other attribute(s)
 
         If more than 1 tuple in the database satisfy the selection criteria, an error is flagged. If the query
         yields no tuples, no errors are flagged and *None* is returned.
@@ -1050,7 +1092,7 @@ class PySob:
         :param db_engine: the reference database engine (uses the default engine, if not provided)
         :param db_conn: optional connection to use (obtains a new one, if not provided)
         :param committable: whether to commit the database operations upon errorless completion
-        :param errors: incidental error messages (might be non-empty)
+        :param errors: incidental error messages (might be a non-empty list)
         :return: the instantiated *SOB* object, or *None* if not found or error
         """
         # inicialize the return variable
@@ -1115,17 +1157,21 @@ class PySob:
     @staticmethod
     def retrieve(__references: type[Sob | list[Sob]] | list[type[Sob | list[Sob]]] = None,
                  /,
-                 joins: list[tuple[tuple[type[Sob], str] | type[Sob],
+                 joins: list[tuple[type[Sob],
                                    list[tuple[StrEnum, StrEnum,
-                                        Literal["=", "!=", "<=", ">="]],
-                                        Literal["and", "or"]],
-                                   Literal["inner", "full", "left", "right"]]] |
-                        list[tuple] = None,
+                                              Literal["=", "<>", "<=", ">="] | None,
+                                              Literal["and", "or"] | None]],
+                                   Literal["inner", "full", "left", "right"] | None]] | list[tuple] = None,
                  where_clause: str = None,
                  where_vals: tuple = None,
-                 where_data: dict[str, Any] = None,
-                 orderby_clause: list[tuple[StrEnum | str, Literal["asc", "desc"]]] |
-                                 tuple[StrEnum | str, Literal["asc", "desc"]] | StrEnum | str = None,
+                 where_data: dict[StrEnum | tuple |
+                                  tuple[StrEnum,
+                                        Literal["=", ">", "<", ">=", "<=",
+                                                "<>", "in", "like", "between"] | None,
+                                        Literal["and", "or"] | None], Any] = None,
+                 orderby_clause: StrEnum |
+                                 tuple[StrEnum, Literal["asc", "desc"] | None] |
+                                 list[StrEnum | tuple[StrEnum, Literal["asc", "desc"] | None]] = None,
                  min_count: int = None,
                  max_count: int = None,
                  offset_count: int = None,
@@ -1138,25 +1184,33 @@ class PySob:
         Retrieve the instances of *SOB* objects from the database, as per the criteria provided.
 
         Optionally, *joins* holds a list of tuples specifying the table joins, with the following format:
-            1. the first element identifies the table and optionally, the corresponding alias to use:
-                - a singlet, with the type of the *Sob* subclass whose database table is to be joined, or
-                - a 2-tuple, with the type of the *Sob* subclass whose database table is to be joined and its alias
+            1. the first element identifies the table:
+                - a singlet, with the type of the *Sob* subclass whose database table is to be joined
             2. a 2/3/4-tuple, or a list of 2/3/4-tuples, informs on the *ON* fragment conditions:
                 - the first attribute, as a string or a *StrEnum* instance
                 - the second attribute, as a string or a *StrEnum* instance
-                - the operation ("=", "!=", "<=", or ">=", defaults to "=")
+                - the operation ("=", "<>", "<=", or ">=", defaults to "=")
                 - the connector to the next condition ("and" or "or", defaults to "and")
             3. the third element is the type of the join ("inner", "full", "left", "right", defaults to "inner")
 
-        Selection criteria may be specified in *where_clause*, and/or by key-value pairs in *where_data*,
-        which would be concatenated by the *AND* logical connector. Care should be exercised if *where_clause*
-        contains *IN* directives. In PostgreSQL, the list of values for an attribute with the *IN* directive
-        must be contained in a specific tuple, and the operation will break for a list of values containing
-        only 1 element. The safe way to specify *IN* directives is to add them to *where_data*, as the specifics
-        of each DB flavor will then be properly dealt with.
+        Optionally, selection criteria may be specified in *where_clause* and *where_vals*, or additionally but
+        preferably, by key-value pairs in *where_data*. Care should be exercised if *where_clause* contains *IN*
+        directives. In PostgreSQL, the list of values for an attribute with the *IN* directive must be contained
+        in a specific tuple, and the operation will break for a list of values containing only 1 element.
+        The safe way to specify *IN* directives is to add them to *where_data*, as the specifics of each DB flavor
+        will then be properly dealt with.
+
+        The syntax specific to *where_data*'s key/value pairs is as follows:
+            1. *key*:
+                - an attribute (*StrEnum*, or *str* possibly aliased), or
+                - a 2/3-tuple with an attribute and the corresponding SQL comparison operation
+                  ("=", ">", "<", ">=", "<=", "<>", "in", "like", "between" - defaults to "="), followed
+                  by a SQL logical operator relating it to the next item ("and", "or" - defaults to "and")
+            2. *value*:
+                - a scalar, or a list, or an expression possibly containing other attribute(s)
 
         The sort order of the query results may be specified by *orderby_clause*, which might be:
-            - a *str* or *StrEnum* indicating the attribute and the default sort direction *asc*
+            - a *str* or *StrEnum* indicating the attribute and the default sort direction *asc*, or
             - a tuple or a list of tuples, each indicating an attribute and its sort direction (defaults to *asc*)
 
         If not positive integers, *min_count*, *max_count*, *offset_count*, and *limit_count* are ignored.
@@ -1182,7 +1236,7 @@ class PySob:
         :param db_engine: the reference database engine (uses the default engine, if not provided)
         :param db_conn: optional connection to use (obtains a new one, if not provided)
         :param committable: whether to commit the database operations upon errorless completion
-        :param errors: incidental error messages (might be non-empty)
+        :param errors: incidental error messages (might be a non-empty list)
         :return: a list with the objects instantiated, *[]* on empty result, or *None* if error
         """
         # inicialize the return variable
@@ -1256,7 +1310,11 @@ class PySob:
     @staticmethod
     def erase(where_clause: str = None,
               where_vals: tuple = None,
-              where_data: dict[str, Any] = None,
+              where_data: dict[StrEnum | tuple |
+                               tuple[StrEnum,
+                                     Literal["=", ">", "<", ">=", "<=",
+                                             "<>", "in", "like", "between"] | None,
+                                     Literal["and", "or"] | None], Any] = None,
               min_count: int = None,
               max_count: int = None,
               db_engine: DbEngine = None,
@@ -1266,12 +1324,21 @@ class PySob:
         """
         Erase touples from the corresponding database table, as per the criteria provided.
 
-        The values for selecting the tuples to be deleted are in *where_vals*, and/or additionally specified
-        by key-value pairs in *where_data*. Care should be exercised if *where_clause* contains *IN* directives.
-        In PostgreSQL, the list of values for an attribute with the *IN* directive must be contained in a
-        specific tuple, and the operation will break for a list of values containing only 1 element.
-        The safe way to specify *IN* directives is to add them to *where_data*, as the specifics of each
-        DB flavor will then be properly dealt with.
+        Optionally, selection criteria may be specified in *where_clause* and *where_vals*, or additionally but
+        preferably, by key-value pairs in *where_data*. Care should be exercised if *where_clause* contains *IN*
+        directives. In PostgreSQL, the list of values for an attribute with the *IN* directive must be contained
+        in a specific tuple, and the operation will break for a list of values containing only 1 element.
+        The safe way to specify *IN* directives is to add them to *where_data*, as the specifics of each DB flavor
+        will then be properly dealt with.
+
+        The syntax specific to *where_data*'s key/value pairs is as follows:
+            1. *key*:
+                - an attribute (*StrEnum*, or *str* possibly aliased), or
+                - a 2/3-tuple with an attribute and the corresponding SQL comparison operation
+                  ("=", ">", "<", ">=", "<=", "<>", "in", "like", "between" - defaults to "="), followed
+                  by a SQL logical operator relating it to the next item ("and", "or" - defaults to "and")
+            2. *value*:
+                - a scalar, or a list, or an expression possibly containing other attribute(s)
 
         If not positive integers, *min_count*, *max_count*, *offset_count*, and *limit_count* are ignored.
         If both *min_count* and *max_count* are specified with equal values, then exactly that number of
@@ -1289,7 +1356,7 @@ class PySob:
         :param db_engine: the reference database engine (uses the default engine, if not provided)
         :param db_conn: optional connection to use (obtains a new one, if not provided)
         :param committable: whether to commit the database operations upon errorless completion
-        :param errors: incidental error messages (might be non-empty)
+        :param errors: incidental error messages (might be a non-empty list)
         :return: the number of deleted tuples, or *None* if error
         """
         # initialize the return variable
@@ -1344,7 +1411,7 @@ class PySob:
         :param db_engine: the reference database engine (uses the default engine, if not provided)
         :param db_conn: optional connection to use (obtains a new one, if not provided)
         :param committable: whether to commit the database operations upon errorless completion
-        :param errors: incidental error messages (might be non-empty)
+        :param errors: incidental error messages (might be a non-empty list)
         :return: the values of *return_cols*, the number of inserted tuples (0 ou 1), or *None* if error
         """
         # initialize the return variable
@@ -1387,7 +1454,7 @@ class PySob:
         character "1" is appended.
 
         :param attrs: the *list* or *dict* containing the database attributes
-        :param errors: incidental error messages (might be non-empty)
+        :param errors: incidental error messages (might be a non-empty list)
         :return: the *list* or *dict* containing the aliased database attributes
         """
         # initialize the return variable
@@ -1403,7 +1470,7 @@ class PySob:
                 if isinstance(attr, StrEnum):
                     subcls_name: str = attr.__class__.__qualname__.rsplit(".", 1)[0]
                     if subcls_name not in aliases:
-                        subcls_alias: str =  "".join([c for c in subcls_name if c.isupper()]).lower()
+                        subcls_alias: str = "".join([c for c in subcls_name if c.isupper()]).lower()
                         while dict_has_value(source=aliases,
                                              value=subcls_alias):
                             subcls_alias += "1"
@@ -1416,29 +1483,29 @@ class PySob:
 
     # noinspection PyPep8
     @staticmethod
-    def build_from_clause(joins: list[tuple[tuple[type[Sob], str] | type[Sob],
+    def build_from_clause(joins: list[tuple[type[Sob],
                                             list[tuple[StrEnum, StrEnum,
-                                                 Literal["=", "!=", "<=", ">="]],
-                                                 Literal["and", "or"]],
-                                            Literal["inner", "full", "left", "right"]]] |
+                                                       Literal["=", "<>", "<=", ">="] | None,
+                                                       Literal["and", "or"] | None]],
+                                            Literal["inner", "full", "left", "right"] | None]] |
                                  list[tuple] = None,
                           errors: list[str] = None) -> str:
         """
         Build the query's *FROM* clause.
 
         Optionally, *joins* holds a list of tuples specifying the table joins, with the following format:
-            1. the first element identifies the table and optionally, the corresponding alias to use:
-                - a singlet, with the type of the *Sob* subclass whose database table is to be joined, or
-                - a 2-tuple, with the type of the *Sob* subclass whose database table is to be joined and its alias
+            1. the first element identifies the table:
+                - a singlet, with the type of the *Sob* subclass whose database table is to be joined
             2. a 2/3/4-tuple, or a list of 2/3/4-tuples, informs on the *ON* fragment conditions:
                 - the first attribute, as a string or a *StrEnum* instance
                 - the second attribute, as a string or a *StrEnum* instance
-                - the operation ("=", "!=", "<=", or ">=", defaults to "=")
+                - the operation ("=", "<>", "<=", or ">=", defaults to "=")
                 - the connector to the next condition ("and" or "or", defaults to "and")
             3. the third element is the type of the join ("inner", "full", "left", "right", defaults to "inner")
 
         :param joins: the list of *JOIN* clauses
-        :param errors: incidental error messages (might be non-empty)
+        :param errors: incidental error messages (might be a non-empty list)
+        :return: the *FROM* clause containing the *JOIN*s
         """
         # initialize the return variable
         result: str | None = None
@@ -1500,20 +1567,30 @@ class PySob:
         elif isinstance(attrs, dict):
             result: dict[str, str] = {}
             for attr, val in attrs.items():
-                aliased_attr: str = PySob.__add_alias(attr=attr,
-                                                      aliases=aliases)
-                result[aliased_attr] = val
+                # handle 'where_data' with complex keys
+                if isinstance(attr, list | tuple):
+                    aliased_attr: str = PySob.__add_alias(attr=attr[0],
+                                                          aliases=aliases)
+                    if isinstance(attr, list):
+                        attr = [aliased_attr, *attr[1:]]
+                    else:
+                        attr = (aliased_attr, *attr[1:])
+                    result[attr] = val
+                else:
+                    aliased_attr: str = PySob.__add_alias(attr=attr,
+                                                          aliases=aliases)
+                    result[aliased_attr] = val
 
         return result
 
     # noinspection PyPep8
     @staticmethod
     def __build_aliases_map(subcls: type[Sob],
-                            joins: list[tuple[tuple[type[Sob], str] | type[Sob],
+                            joins: list[tuple[type[Sob],
                                               list[tuple[StrEnum, StrEnum,
-                                                   Literal["=", "!=", "<=", ">="]],
-                                                   Literal["and", "or"]],
-                                              Literal["inner", "full", "left", "right"]]] |
+                                                         Literal["=", "<>", "<=", ">="] | None,
+                                                         Literal["and", "or"] | None]],
+                                              Literal["inner", "full", "left", "right"] | None]] |
                                    list[tuple] = None) -> dict[str, str]:
         """
         Map the *Sob* subclasses to database aliases.
@@ -1551,29 +1628,29 @@ class PySob:
     @staticmethod
     def __build_from_clause(subcls: type[Sob],
                             aliases: dict[str, str],
-                            joins: list[tuple[tuple[type[Sob], str] | type[Sob],
+                            joins: list[tuple[type[Sob],
                                               list[tuple[StrEnum, StrEnum,
-                                                   Literal["=", "!=", "<=", ">="]],
-                                                   Literal["and", "or"]],
-                                              Literal["inner", "full", "left", "right"]]] |
+                                                         Literal["=", "<>", "<=", ">="] | None,
+                                                         Literal["and", "or"] | None]],
+                                              Literal["inner", "full", "left", "right"] | None]] |
                                    list[tuple] = None) -> str:
         """
         Build the query's *FROM* clause.
 
         Optionally, *joins* holds a list of tuples specifying the table joins, with the following format:
-            1. the first element identifies the table and optionally, the corresponding alias to use:
-                - a singlet, with the type of the *Sob* subclass whose database table is to be joined, or
-                - a 2-tuple, with the type of the *Sob* subclass whose database table is to be joined and its alias
+            1. the first element identifies the table:
+                - a singlet, with the type of the *Sob* subclass whose database table is to be joined
             2. a 2/3/4-tuple, or a list of 2/3/4-tuples, informs on the *ON* fragment conditions:
                 - the first attribute, as a string or a *StrEnum* instance
                 - the second attribute, as a string or a *StrEnum* instance
-                - the operation ("=", "!=", "<=", or ">=", defaults to "=")
+                - the operation ("=", "<>", "<=", or ">=", defaults to "=")
                 - the connector to the next condition ("and" or "or", defaults to "and")
             3. the third element is the type of the join ("inner", "full", "left", "right", defaults to "inner")
 
         :param subcls: the reference *Sob* subclass
         :param aliases: mapping of *Sob* subclasses to aliases
         :param joins: the list of *JOIN* clauses
+        :return: the *FROM* clause containing the *JOIN*s
         """
         # obtain the the fully-qualified name of the class type
         cls_name: str = f"{subcls.__module__}.{subcls.__qualname__}"
@@ -1583,10 +1660,7 @@ class PySob:
 
         # traverse the joins
         for join in joins or []:
-            if isinstance(join[0], tuple):
-                join_cls: str = f"{join[0][0].__module__}.{join[0][0].__qualname__}"
-            else:
-                join_cls: str = f"{join[0].__module__}.{join[0].__qualname__}"
+            join_cls: str = f"{join[0].__module__}.{join[0].__qualname__}"
             table_name: str = sob_db_specs[join_cls][0]
             join_alias: str = aliases.get(join_cls[join_cls.rindex(".")+1:])
             join_mode: str = join[3].upper() if len(join) > 3 else "INNER"
@@ -1595,7 +1669,7 @@ class PySob:
             # traverse the mandatory 'ON' specs
             on_specs: list[tuple] = join[1] if isinstance(join[1], list) else [join[1]]
             for on_spec in on_specs:
-                op: str = on_spec[2] if len(on_spec) > 2 and on_spec[2] in ["=", "!=", "<=", ">="] else "="
+                op: str = on_spec[2] if len(on_spec) > 2 and on_spec[2] in ["=", "<>", "<=", ">="] else "="
                 result += (PySob.__add_alias(attr=on_spec[0],
                                              aliases=aliases) + " " + op + " " +
                            PySob.__add_alias(attr=on_spec[1],
@@ -1608,10 +1682,15 @@ class PySob:
 
     # noinspection PyPep8
     @staticmethod
-    def __normalize_orderby(orderby: list[tuple[StrEnum | str, Literal["asc", "desc"]]] |
-                                     tuple[StrEnum | str, Literal["asc", "desc"]] | StrEnum | str = None) -> str:
+    def __normalize_orderby(orderby: StrEnum |
+                                     tuple[StrEnum, Literal["asc", "desc"] | None] |
+                                     list[StrEnum | tuple[StrEnum, Literal["asc", "desc"] | None]] = None) -> str:
         """
         Normalize the *ORDER BY* query clause, by adding aliases and converting to a *str*.
+
+        The sort order of the query results as might be specified by *orderby_clause*:
+            - a *str* or *StrEnum* indicating the attribute and the default sort direction *asc*, or
+            - a tuple or a list of tuples, each indicating an attribute and its sort direction (defaults to *asc*)
 
         :param orderby: the query retrieval order
         :return: the normalized *ORDER BY* clause as *str*, with added aliases
@@ -1626,6 +1705,7 @@ class PySob:
         for item in orderby:
             attr: str | StrEnum
             dirc: str
+            # noinspection PyUnreachableCode
             if isinstance(item, tuple):
                 attr = item[0]
                 dirc = item[1].upper() if len(item) > 1 and item[1] in ["asc", "desc"] else "ASC"
@@ -1642,7 +1722,7 @@ class PySob:
         """
         Retrieve the fully-qualified type of the subclass currently being accessed.
 
-        :param errors: incidental error messages (might be non-empty)
+        :param errors: incidental error messages (might be a non-empty list)
         :param logger: optional logger
         :return: the fully-qualified type of the subclass currently being accessed, or *None* if error
         :
@@ -1719,7 +1799,7 @@ class PySob:
         :param db_engine: the reference database engine (uses the default engine, if not provided)
         :param db_conn: optional connection to use (obtains a new one, if not provided)
         :param committable: whether to commit the database operations upon errorless completion
-        :param errors: incidental error messages (might be non-empty)
+        :param errors: incidental error messages (might be a non-empty list)
         :return: *True* if at least one references was load, *False* otherwise, or *None* if error
         """
         # make sure '__references' is a list
