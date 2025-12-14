@@ -721,7 +721,7 @@ class PySob:
         Count the occurrences of tuples in the corresponding database table, as per the criteria provided.
 
         Optionally, *joins* holds a list of tuples specifying the table joins, with the following format:
-            1. the first element identifies the table:
+            1. the first element in the tuple identifies the table:
                 - a singlet, with the type of the *Sob* subclass whose database table is to be joined
             2. a 2/3/4-tuple, or a list of 2/3/4-tuples, informs on the *ON* fragment conditions:
                 - the first attribute, as a string or a *StrEnum* instance
@@ -820,7 +820,7 @@ class PySob:
         Determine if at least one tuple exists in the database table, as per the criteria provided.
 
         Optionally, *joins* holds a list of tuples specifying the table joins, with the following format:
-            1. the first element identifies the table:
+            1. the first element in the tuple identifies the table:
                 - a singlet, with the type of the *Sob* subclass whose database table is to be joined
             2. a 2/3/4-tuple, or a list of 2/3/4-tuples, informs on the *ON* fragment conditions:
                 - the first attribute, as a string or a *StrEnum* instance
@@ -928,7 +928,7 @@ class PySob:
         Retrieve the values of *attrs* from the database, as per the criteria provided.
 
         Optionally, *joins* holds a list of tuples specifying the table joins, with the following format:
-            1. the first element identifies the table:
+            1. the first element in the tuple identifies the table:
                 - a singlet, with the type of the *Sob* subclass whose database table is to be joined
             2. a 2/3/4-tuple, or a list of 2/3/4-tuples, informs on the *ON* fragment conditions:
                 - the first attribute, as a string or a *StrEnum* instance
@@ -1009,7 +1009,8 @@ class PySob:
                                                            aliases=aliases)
             # normalize the 'ORDER BY' clause
             if orderby_clause:
-                orderby_clause = PySob.__normalize_orderby(orderby=orderby_clause)
+                orderby_clause = PySob.__normalize_orderby(orderby=orderby_clause,
+                                                           aliases=aliases)
 
             # retrieve the data
             sel_stmt: str = f"SELECT DISTINCT {', '.join(aliased_attrs)} FROM {from_clause}"
@@ -1052,7 +1053,7 @@ class PySob:
         Retrieve the single instance of the *SOB* object from the database, as per the criteria provided.
 
         Optionally, *joins* holds a list of tuples specifying the table joins, with the following format:
-            1. the first element identifies the table:
+            1. the first element in the tuple identifies the table:
                 - a singlet, with the type of the *Sob* subclass whose database table is to be joined
             2. a 2/3/4-tuple, or a list of 2/3/4-tuples, informs on the *ON* fragment conditions:
                 - the first attribute, as a string or a *StrEnum* instance
@@ -1184,7 +1185,7 @@ class PySob:
         Retrieve the instances of *SOB* objects from the database, as per the criteria provided.
 
         Optionally, *joins* holds a list of tuples specifying the table joins, with the following format:
-            1. the first element identifies the table:
+            1. the first element in the tuple identifies the table:
                 - a singlet, with the type of the *Sob* subclass whose database table is to be joined
             2. a 2/3/4-tuple, or a list of 2/3/4-tuples, informs on the *ON* fragment conditions:
                 - the first attribute, as a string or a *StrEnum* instance
@@ -1193,12 +1194,12 @@ class PySob:
                 - the connector to the next condition ("and" or "or", defaults to "and")
             3. the third element is the type of the join ("inner", "full", "left", "right", defaults to "inner")
 
-        Optionally, selection criteria may be specified in *where_clause* and *where_vals*, or additionally but
-        preferably, by key-value pairs in *where_data*. Care should be exercised if *where_clause* contains *IN*
-        directives. In PostgreSQL, the list of values for an attribute with the *IN* directive must be contained
-        in a specific tuple, and the operation will break for a list of values containing only 1 element.
-        The safe way to specify *IN* directives is to add them to *where_data*, as the specifics of each DB flavor
-        will then be properly dealt with.
+        Selection criteria may be specified in *where_clause* and *where_vals*, or additionally but preferably,
+        by key-value pairs in *where_data*. Care should be exercised if *where_clause* contains *IN* directives.
+        In PostgreSQL, the list of values for an attribute with the *IN* directive must be contained in a
+        specific tuple, and the operation will break for a list of values containing only 1 element.
+        The safe way to specify *IN* directives is to add them to *where_data*, as the specifics of each DB
+        flavor will then be properly dealt with.
 
         The syntax specific to *where_data*'s key/value pairs is as follows:
             1. *key*:
@@ -1266,7 +1267,8 @@ class PySob:
 
             # normalize the 'ORDER BY' clause
             if orderby_clause:
-                orderby_clause = PySob.__normalize_orderby(orderby=orderby_clause)
+                orderby_clause = PySob.__normalize_orderby(orderby=orderby_clause,
+                                                           aliases=aliases)
 
             # retrieve the data
             where_data = PySob.__add_aliases(attrs=where_data,
@@ -1450,27 +1452,16 @@ class PySob:
         """
         Add the appropriate database aliases to the names of the database attributes in *attrs*.
 
-        Aliases will be constructed with the uppercase letters of the *Sob* class name, concatenated
-        in the sequence that they appear, and then converted to lowercase. If a conflict arises, the
-        character "1" is appended.
-
-        If specified, *classes* will be considered first, immediately after the invoking class itself.
+        An alias is obtained by concatenating the uppercase letters of the *Sob* subclass name and setting
+        it to lowercase. If a conflict arises, subsequent lowercase letters from the *Sob* subclass name
+        are added to the alias, until the alias becomes unique. If specified, *classes* will be considered first,
+        immediately after the invoking class itself.
 
         :param attrs: the *list* or *dict* containing the database attributes
         :param classes: optional list of pre-defined *Sob* subclasses
         :param errors: incidental error messages (might be a non-empty list)
         :return: the *list* or *dict* containing the aliased database attributes
         """
-        def register_alias(aliases_map: dict[str, str],
-                           cls_name: str) -> None:
-
-            if cls_name not in aliases_map:
-                cls_alias: str = "".join([c for c in cls_name if c.isupper()]).lower()
-                while dict_has_value(source=aliases_map,
-                                     value=cls_alias):
-                    cls_alias += "1"
-                aliases_map[cls_name] = cls_alias
-
         # initialize the return variable
         result: list[str] | dict[str, Any] | None = None
 
@@ -1482,22 +1473,20 @@ class PySob:
             aliases: dict[str, str] = {}
 
             # register the invoking class first
-            subcls_name: str = cls.__qualname__.rsplit(".", 1)[0]
-            register_alias(aliases_map=aliases,
-                           cls_name=subcls_name)
+            PySob.__register_class_alias(subcls=cls,
+                                         aliases=aliases)
 
             # then the list of *Sob* subclasses
             if classes:
                 for subcls in classes:
-                    subcls_name = subcls.__qualname__.rsplit(".", 1)[0]
-                    register_alias(aliases_map=aliases,
-                                   cls_name=subcls_name)
+                    PySob.__register_class_alias(subcls=subcls,
+                                                 aliases=aliases)
             # then the attributes
             for attr in attrs:
                 if isinstance(attr, StrEnum):
-                    subcls_name = attr.__class__.__qualname__.rsplit(".", 1)[0]
-                    register_alias(aliases_map=aliases,
-                                   cls_name=subcls_name)
+                    subcls = attr.__class__
+                    PySob.__register_class_alias(subcls=subcls,
+                                                 aliases=aliases)
             # add the aliases
             result = PySob.__add_aliases(attrs=attrs,
                                          aliases=aliases)
@@ -1516,7 +1505,7 @@ class PySob:
         Build the query's *FROM* clause.
 
         Optionally, *joins* holds a list of tuples specifying the table joins, with the following format:
-            1. the first element identifies the table:
+            1. the first element in the tuple identifies the table:
                 - a singlet, with the type of the *Sob* subclass whose database table is to be joined
             2. a 2/3/4-tuple, or a list of 2/3/4-tuples, informs on the *ON* fragment conditions:
                 - the first attribute, as a string or a *StrEnum* instance
@@ -1547,21 +1536,19 @@ class PySob:
 
     @staticmethod
     def __add_alias(attr: str | StrEnum,
-                    aliases: dict[str, str] = None) -> str:
+                    aliases: dict[str, str]) -> str:
         """
         Add the appropriate database alias to *attr*.
 
         :param attr: the database attribute
         :param aliases: mapping of *Sob* subclasses to aliases
+        :return: the aliased attribute
         """
         if isinstance(attr, StrEnum):
             subcls_name: str = attr.__class__.__qualname__.rsplit(".", 1)[0]
-            if aliases is None:
-                attr_alias: str = "".join([c for c in subcls_name if c.isupper()]).lower() + "."
-            else:
-                attr_alias: str = aliases.get(subcls_name, "")
-                if attr_alias:
-                    attr_alias = attr_alias + "."
+            attr_alias: str = aliases.get(subcls_name, "")
+            if attr_alias:
+                attr_alias = attr_alias + "."
             result: str = attr_alias + attr.value.lower()
         else:
             result: str = attr
@@ -1569,8 +1556,8 @@ class PySob:
         return result
 
     @staticmethod
-    def __add_aliases(attrs: list[str | StrEnum] | dict[str | StrEnum, Any] | None,
-                      aliases: dict[str, str]) -> list[str] | dict[str, Any] | None:
+    def __add_aliases(attrs: list[str | StrEnum] | dict[str | StrEnum, Any],
+                      aliases: dict[str, str]) -> list[str] | dict[str, Any]:
         """
         Add the appropriate database aliases to the names of the database attributes in *attrs*.
 
@@ -1613,37 +1600,35 @@ class PySob:
                                                          Literal["=", "<>", "<=", ">="] | None,
                                                          Literal["and", "or"] | None]],
                                               Literal["inner", "full", "left", "right"] | None]] |
-                                   list[tuple] = None) -> dict[str, str]:
+                                   list[tuple]) -> dict[str, str]:
         """
         Map the *Sob* subclasses to database aliases.
 
-        Omitted aliases will be constructed with the uppercase letters of the *Sob* class name, concatenated
-        in the sequence that they appear, and then converted to lowercase. If a conflict arises, the character "1"
-        is appended.
+        The parameter *joins* holds a list of tuples specifying the table joins, with the following format:
+            1. the first element in the tuple identifies the table:
+                - a singlet, with the type of the *Sob* subclass whose database table is to be joined
+            2. a 2/3/4-tuple, or a list of 2/3/4-tuples, informs on the *ON* fragment conditions:
+                - the first attribute, as a string or a *StrEnum* instance
+                - the second attribute, as a string or a *StrEnum* instance
+                - the operation ("=", "<>", "<=", or ">=", defaults to "=")
+                - the connector to the next condition ("and" or "or", defaults to "and")
+            3. the third element is the type of the join ("inner", "full", "left", "right", defaults to "inner")
 
         :param subcls: the reference *Sob* subclass
         :param joins: the list of *JOIN* clauses
         """
-        # determine the alias for the master table
-        alias: str = "".join([c for c in subcls.__qualname__ if c.isupper()]).lower()
-
         # initialize the return variable
-        result: dict[str, str] = {subcls.__qualname__: alias}
+        result: dict[str, str] = {}
 
-        # traverse the joins
+        # register the alias for the master subclass
+        PySob.__register_class_alias(subcls=subcls,
+                                     aliases=result)
+
+        # traverse the joins (only the first element in each tuple is relevant)
         for join in joins or []:
-            if isinstance(join[0], tuple):
-                join_cls: str = join[0][0].__qualname__
-                join_alias: str = join[0][1]
-            else:
-                join_cls: str = join[0].__qualname__
-                join_alias: str = "".join([c for c in join_cls if c.isupper()]).lower()
-            if join_cls not in result:
-                while dict_has_value(source=result,
-                                     value=join_alias):
-                    join_alias += "1"
-                result[join_cls] = join_alias
-
+            join_cls: type[Sob] = join[0]
+            PySob.__register_class_alias(subcls=join_cls,
+                                         aliases=result)
         return result
 
     # noinspection PyPep8
@@ -1660,7 +1645,7 @@ class PySob:
         Build the query's *FROM* clause.
 
         Optionally, *joins* holds a list of tuples specifying the table joins, with the following format:
-            1. the first element identifies the table:
+            1. the first element in the tuple identifies the table:
                 - a singlet, with the type of the *Sob* subclass whose database table is to be joined
             2. a 2/3/4-tuple, or a list of 2/3/4-tuples, informs on the *ON* fragment conditions:
                 - the first attribute, as a string or a *StrEnum* instance
@@ -1706,7 +1691,8 @@ class PySob:
     @staticmethod
     def __normalize_orderby(orderby: StrEnum |
                                      tuple[StrEnum, Literal["asc", "desc"] | None] |
-                                     list[StrEnum | tuple[StrEnum, Literal["asc", "desc"] | None]] = None) -> str:
+                                     list[StrEnum | tuple[StrEnum, Literal["asc", "desc"] | None]],
+                            aliases: dict[str, str]) -> str:
         """
         Normalize the *ORDER BY* query clause, by adding aliases and converting to a *str*.
 
@@ -1726,15 +1712,16 @@ class PySob:
         # traverse the parameter elements
         for item in orderby:
             attr: str | StrEnum
-            dirc: str
+            sort_dir: str
             # noinspection PyUnreachableCode
             if isinstance(item, tuple):
                 attr = item[0]
-                dirc = item[1].upper() if len(item) > 1 and item[1] in ["asc", "desc"] else "ASC"
+                sort_dir = item[1].upper() if len(item) > 1 and item[1] in ["asc", "desc"] else "ASC"
             else:
                 attr = item
-                dirc = "ASC"
-            result += PySob.__add_alias(attr=attr) + " " + dirc + ", "
+                sort_dir = "ASC"
+            result += PySob.__add_alias(attr=attr,
+                                        aliases=aliases) + " " + sort_dir + ", "
 
         return result[:-2]
 
@@ -1801,6 +1788,33 @@ class PySob:
                 errors.append(msg)
 
         return result
+
+    @staticmethod
+    def __register_class_alias(subcls: type[Sob],
+                               aliases: dict[str, str]) -> None:
+        """
+        Register the alias for the *Sob* subclass *subcls*.
+
+        An alias is obtained by concatenating the uppercase letters of the *Sob* subclass name and setting
+        it to lowercase. If a conflict arises, subsequent lowercase letters from the *Sob* subclass name
+        are added to the alias, until the alias becomes unique.
+
+        :param subcls: the reference *Sob* subclass
+        :param aliases: the aliases registry
+        """
+        subcls_name: str = subcls.__qualname__.rsplit(".", 1)[0]
+        if subcls_name not in aliases:
+            cls_alias: str = "".join([c for c in subcls_name if c.isupper()]).lower()
+            pos: int = 0
+            while dict_has_value(source=aliases,
+                                 value=cls_alias):
+                remainder: str = subcls_name[pos:]
+                for c in remainder:
+                    pos += 1
+                    if c.islower():
+                        cls_alias += c
+                        break
+            aliases[subcls_name] = cls_alias
 
     @staticmethod
     def __load_references(__references:  type[Sob | list[Sob]] | list[type[Sob | list[Sob]]],
