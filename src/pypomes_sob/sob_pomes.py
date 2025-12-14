@@ -1445,6 +1445,7 @@ class PySob:
     @staticmethod
     def add_aliases(attrs: list[str | StrEnum] |
                            dict[str | StrEnum, Any] | None,
+                    classes: list[type[Sob]] = None,
                     errors: list[str] = None) -> list[str] | dict[str, Any] | None:
         """
         Add the appropriate database aliases to the names of the database attributes in *attrs*.
@@ -1453,10 +1454,23 @@ class PySob:
         in the sequence that they appear, and then converted to lowercase. If a conflict arises, the
         character "1" is appended.
 
+        If specified, *classes* will be considered first, immediately after the invoking class itself.
+
         :param attrs: the *list* or *dict* containing the database attributes
+        :param classes: optional list of pre-defined *Sob* subclasses
         :param errors: incidental error messages (might be a non-empty list)
         :return: the *list* or *dict* containing the aliased database attributes
         """
+        def register_alias(aliases_map: dict[str, str],
+                           cls_name: str) -> None:
+
+            if cls_name not in aliases_map:
+                cls_alias: str = "".join([c for c in cls_name if c.isupper()]).lower()
+                while dict_has_value(source=aliases_map,
+                                     value=cls_alias):
+                    cls_alias += "1"
+                aliases_map[cls_name] = cls_alias
+
         # initialize the return variable
         result: list[str] | dict[str, Any] | None = None
 
@@ -1464,18 +1478,26 @@ class PySob:
         cls: type[Sob] = PySob.__get_invoking_class(errors=errors)
 
         if cls:
-            # build the aliases map
+            # instantiate the aliases map
             aliases: dict[str, str] = {}
+
+            # register the invoking class first
+            subcls_name: str = cls.__qualname__.rsplit(".", 1)[0]
+            register_alias(aliases_map=aliases,
+                           cls_name=subcls_name)
+
+            # then the list of *Sob* subclasses
+            if classes:
+                for subcls in classes:
+                    subcls_name = subcls.__qualname__.rsplit(".", 1)[0]
+                    register_alias(aliases_map=aliases,
+                                   cls_name=subcls_name)
+            # then the attributes
             for attr in attrs:
                 if isinstance(attr, StrEnum):
-                    subcls_name: str = attr.__class__.__qualname__.rsplit(".", 1)[0]
-                    if subcls_name not in aliases:
-                        subcls_alias: str = "".join([c for c in subcls_name if c.isupper()]).lower()
-                        while dict_has_value(source=aliases,
-                                             value=subcls_alias):
-                            subcls_alias += "1"
-                        aliases[subcls_name] = subcls_alias
-
+                    subcls_name = attr.__class__.__qualname__.rsplit(".", 1)[0]
+                    register_alias(aliases_map=aliases,
+                                   cls_name=subcls_name)
             # add the aliases
             result = PySob.__add_aliases(attrs=attrs,
                                          aliases=aliases)
