@@ -313,27 +313,28 @@ class PySob:
         logger: Logger = sob_loggers.get(cls_name)
 
         # traverse the data
-        for key, value in data.items():
+        for ky, val in data.items():
 
-            # normalize 'key'
-            if isinstance(key, Enum):
-                if isinstance(key, IntEnum | StrEnumUseName):
-                    key = key.name.lower()
+            # normalize 'ky'
+            if isinstance(ky, Enum):
+                if isinstance(ky, IntEnum | StrEnumUseName):
+                    ky = ky.name.lower()
                 else:
-                    key = key.value.lower()
+                    # HAZARD: values of 'IntEnum' cannot be used as attribute names
+                    ky = ky.value.lower()
 
-            # normalize 'value'
-            if isinstance(value, Enum):
-                if isinstance(value, StrEnumUseName):
-                    value = value.name
+            # normalize 'val'
+            if isinstance(val, Enum):
+                if isinstance(val, StrEnumUseName):
+                    val = val.name
                 else:
-                    value = value.value
+                    val = val.value
 
             # register the key/value pair
-            if key in self.__dict__:
-                self.__dict__[key] = value
+            if ky in self.__dict__:
+                self.__dict__[ky] = val
             elif logger:
-                logger.warning(msg=f"'{key}' is not an attribute of class {cls_name}")
+                logger.warning(msg=f"'{ky}' is not an attribute of class {cls_name}")
 
     def get_inputs(self) -> dict[str, Any] | None:
         """
@@ -467,20 +468,19 @@ class PySob:
                                       committable=committable,
                                       errors=errors,
                                       logger=logger)
-        msg: str | None = None
         if recs is not None:
+            msg: str | None = None
             if len(recs) == 0:
-                msg = ("No record found on table "
-                       f"{tbl_name} for {dict_stringify(where_data)}")
+                msg = "No record"
             elif len(recs) > 1:
-                msg = ("More than one record found on table "
-                       f"{tbl_name} for {dict_stringify(where_data)}")
+                msg = "More than one record"
+            if msg:
+                msg += f" found on table {tbl_name} for {dict_stringify(where_data)}"
+                errors.append(msg)
+                if logger:
+                    logger.error(msg=msg)
 
-        if msg:
-            errors.append(msg)
-            if logger:
-                logger.error(msg=msg)
-        else:
+        if not errors:
             pk_name: str = sob_db_columns[cls_name][0]
             rec: tuple = recs[0]
             for inx, attr in enumerate(attrs):
@@ -561,6 +561,8 @@ class PySob:
         """
         Load the *SOB* references specified in *__references* from the database.
 
+        This operation must be implemented at the subclass level.
+
         The targer database engine, specified or default, must have been previously configured.
         The parameter *committable* is relevant only if *db_conn* is provided, and is otherwise ignored.
         A rollback is always attempted, if an error occurs.
@@ -594,11 +596,11 @@ class PySob:
         """
         Invalidate the object's *SOB* references specified in *__references*.
 
+        Whenever needed, this operation must be implemented at the subclass level.
+
         The targer database engine, specified or default, must have been previously configured.
         The parameter *committable* is relevant only if *db_conn* is provided, and is otherwise ignored.
         A rollback is always attempted, if an error occurs.
-
-        Whenever needed, this operation must be by the subclass level.
 
         :param __references: the *SOB* references to invalidate
         :param db_engine: the reference database engine (uses the default engine, if not provided)
@@ -1005,13 +1007,12 @@ class PySob:
                                                          aliases=aliases,
                                                          joins=joins)
             # build the aliased attributes list
-            aliased_attrs: list[str] = PySob.__add_aliases(attrs=attrs,
+            aliased_attrs: list[str] = PySob.__add_aliases(attrs=list(attrs),
                                                            aliases=aliases)
             # normalize the 'ORDER BY' clause
             if orderby_clause:
                 orderby_clause = PySob.__normalize_orderby(orderby=orderby_clause,
                                                            aliases=aliases)
-
             # retrieve the data
             sel_stmt: str = f"SELECT DISTINCT {', '.join(aliased_attrs)} FROM {from_clause}"
             result = db_select(sel_stmt=sel_stmt,
@@ -1269,7 +1270,6 @@ class PySob:
             if orderby_clause:
                 orderby_clause = PySob.__normalize_orderby(orderby=orderby_clause,
                                                            aliases=aliases)
-
             # retrieve the data
             where_data = PySob.__add_aliases(attrs=where_data,
                                              aliases=aliases)
