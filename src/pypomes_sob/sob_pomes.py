@@ -133,8 +133,7 @@ class PySob:
                                     engine=db_engine,
                                     connection=db_conn,
                                     committable=committable,
-                                    errors=errors,
-                                    logger=logger)
+                                    errors=errors)
         if rec is not None:
             if is_identity:
                 # PK is an identity column
@@ -174,7 +173,6 @@ class PySob:
             errors = []
 
         # execute the UPDATE statement
-        logger: Logger = sob_loggers.get(cls_name)
         return db_update(update_stmt=f"UPDATE {tbl_name}",
                          update_data=update_data,
                          where_data={pk_name: key},
@@ -183,8 +181,7 @@ class PySob:
                          engine=db_engine,
                          connection=db_conn,
                          committable=committable,
-                         errors=errors,
-                         logger=logger) is not None
+                         errors=errors) is not None
 
     def persist(self,
                 db_engine: DbEngine = None,
@@ -255,15 +252,13 @@ class PySob:
             errors = []
 
         # execute the DELETE statement
-        logger: Logger = sob_loggers.get(cls_name)
         result: int = db_delete(delete_stmt=f"DELETE FROM {tbl_name}",
                                 where_data=where_data,
                                 max_count=1,
                                 engine=db_engine,
                                 connection=db_conn,
                                 committable=committable,
-                                errors=errors,
-                                logger=logger)
+                                errors=errors)
         if result is not None:
             self.clear()
 
@@ -400,14 +395,12 @@ class PySob:
 
         # execute the query
         if where_data:
-            logger: Logger = sob_loggers.get(cls_name)
             result = db_exists(table=tbl_name,
                                where_data=where_data,
                                engine=db_engine,
                                connection=db_conn,
                                committable=committable,
-                               errors=errors,
-                               logger=logger)
+                               errors=errors)
         return result
 
     def load(self,
@@ -458,7 +451,6 @@ class PySob:
             errors = []
 
         # loading the object from the database might fail
-        logger: Logger = sob_loggers.get(cls_name)
         attrs: list[str] = self.get_columns()
         recs: list[tuple] = db_select(sel_stmt=f"SELECT {', '.join(attrs)} FROM {tbl_name}",
                                       where_data=where_data,
@@ -466,8 +458,7 @@ class PySob:
                                       engine=db_engine,
                                       connection=db_conn,
                                       committable=committable,
-                                      errors=errors,
-                                      logger=logger)
+                                      errors=errors)
         if recs is not None:
             msg: str | None = None
             if len(recs) == 0:
@@ -476,9 +467,10 @@ class PySob:
                 msg = "More than one record"
             if msg:
                 msg += f" found on table {tbl_name} for {dict_stringify(where_data)}"
-                errors.append(msg)
+                logger: Logger = sob_loggers.get(cls_name)
                 if logger:
                     logger.error(msg=msg)
+                errors.append(msg)
 
         if not errors:
             pk_name: str = sob_db_columns[cls_name][0]
@@ -774,9 +766,6 @@ class PySob:
         cls: type[Sob] = PySob.__get_invoking_class(errors=errors)
 
         if cls:
-            cls_name: str = f"{cls.__module__}.{cls.__qualname__}"
-            logger: Logger = sob_loggers.get(cls_name)
-
             # obtain the aliases map
             aliases: dict[str, str] = PySob.__build_aliases_map(subcls=cls,
                                                                 joins=joins)
@@ -795,8 +784,7 @@ class PySob:
                               engine=db_engine,
                               connection=db_conn,
                               committable=committable,
-                              errors=errors,
-                              logger=logger)
+                              errors=errors)
         return result
 
     @staticmethod
@@ -874,9 +862,6 @@ class PySob:
         cls: type[Sob] = PySob.__get_invoking_class(errors=errors)
 
         if cls:
-            cls_name: str = f"{cls.__module__}.{cls.__qualname__}"
-            logger: Logger = sob_loggers.get(cls_name)
-
             # obtain the aliases map
             aliases: dict[str, str] = PySob.__build_aliases_map(subcls=cls,
                                                                 joins=joins)
@@ -896,8 +881,7 @@ class PySob:
                                engine=db_engine,
                                connection=db_conn,
                                committable=committable,
-                               errors=errors,
-                               logger=logger)
+                               errors=errors)
         return result
 
     # noinspection PyPep8
@@ -996,9 +980,6 @@ class PySob:
         cls: type[Sob] = PySob.__get_invoking_class(errors=errors)
 
         if cls:
-            cls_name: str = f"{cls.__module__}.{cls.__qualname__}"
-            logger: Logger = sob_loggers.get(cls_name)
-
             # obtain the aliases map
             aliases: dict[str, str] = PySob.__build_aliases_map(subcls=cls,
                                                                 joins=joins)
@@ -1027,8 +1008,7 @@ class PySob:
                                engine=db_engine,
                                connection=db_conn,
                                committable=committable,
-                               errors=errors,
-                               logger=logger)
+                               errors=errors)
         return result
 
     @staticmethod
@@ -1108,9 +1088,6 @@ class PySob:
         cls: type[Sob] = PySob.__get_invoking_class(errors=errors)
 
         if cls:
-            cls_name: str = f"{cls.__module__}.{cls.__qualname__}"
-            logger: Logger = sob_loggers.get(cls_name)
-
             # obtain the aliases map
             aliases: dict[str, str] = PySob.__build_aliases_map(subcls=cls,
                                                                 joins=joins)
@@ -1120,6 +1097,7 @@ class PySob:
                                                          joins=joins)
             # build the attributes list
             alias: str = aliases.get(cls.__qualname__)
+            cls_name: str = f"{cls.__module__}.{cls.__qualname__}"
             attrs: list[str] = [f"{alias}.{attr}" for attr in sob_db_columns.get(cls_name)]
 
             # retrieve the data
@@ -1135,8 +1113,7 @@ class PySob:
                                                      engine=db_engine,
                                                      connection=db_conn,
                                                      committable=committable,
-                                                     errors=errors,
-                                                     logger=logger)
+                                                     errors=errors)
             if recs:
                 # build the SOB object
                 sob: Sob = cls()
@@ -1252,9 +1229,6 @@ class PySob:
         cls: type[Sob] = PySob.__get_invoking_class(errors=errors)
 
         if cls:
-            cls_name: str = f"{cls.__module__}.{cls.__qualname__}"
-            logger: Logger = sob_loggers.get(cls_name)
-
             # obtain the aliases map
             aliases: dict[str, str] = PySob.__build_aliases_map(subcls=cls,
                                                                 joins=joins)
@@ -1264,6 +1238,7 @@ class PySob:
                                                          joins=joins)
             # build the attributes list
             alias: str = aliases.get(cls.__qualname__)
+            cls_name: str = f"{cls.__module__}.{cls.__qualname__}"
             attrs: list[str] = [f"{alias}.{attr}" for attr in sob_db_columns.get(cls_name)]
 
             # normalize the 'ORDER BY' clause
@@ -1286,8 +1261,7 @@ class PySob:
                                                      engine=db_engine,
                                                      connection=db_conn,
                                                      committable=committable,
-                                                     errors=errors,
-                                                     logger=logger)
+                                                     errors=errors)
             if recs is not None:
                 # build the objects list
                 objs: list[Sob] = []
@@ -1373,7 +1347,6 @@ class PySob:
 
         if cls:
             cls_name: str = f"{cls.__module__}.{cls.__qualname__}"
-            logger: Logger = sob_loggers.get(cls_name)
             tbl_name: str = sob_db_specs[cls_name][0]
 
             # delete specified rows
@@ -1386,8 +1359,7 @@ class PySob:
                                engine=db_engine,
                                connection=db_conn,
                                committable=committable,
-                               errors=errors,
-                               logger=logger)
+                               errors=errors)
         return result
 
     @staticmethod
@@ -1429,7 +1401,6 @@ class PySob:
         # delete specified rows
         if cls:
             cls_name: str = f"{cls.__module__}.{cls.__qualname__}"
-            logger: Logger = sob_loggers.get(cls_name)
             tbl_name: str = sob_db_specs[cls_name][0]
 
             # persis the data
@@ -1439,8 +1410,7 @@ class PySob:
                                engine=db_engine,
                                connection=db_conn,
                                committable=committable,
-                               errors=errors,
-                               logger=logger)
+                               errors=errors)
         return result
 
     # noinspection PyPep8
