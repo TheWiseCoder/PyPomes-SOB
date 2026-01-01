@@ -1,5 +1,6 @@
+from enum import IntEnum, StrEnum
 from logging import Logger
-from pypomes_core import APP_PREFIX, env_get_int, env_get_str
+from pypomes_core import APP_PREFIX, StrEnumUseName, env_get_int, env_get_str
 from typing import Final
 
 # base folder name for all 'PySob' subclasses files (must be a part of a Posix-compliant path)
@@ -22,6 +23,9 @@ sob_db_columns: dict[str, tuple] = {}
 #     - the type of its PK attribute (currently, 'int' and 'str' are supported)
 #     - whether the PK attribute is an identity (has values generated automatically by the DB)
 sob_db_specs: dict[str, tuple[str, type, bool]] = {}
+
+# holds mapping of enums to instance attributes
+sob_attrs_enum: dict[str, dict[str, type[IntEnum | StrEnum | StrEnumUseName]]] = {}
 
 # holds sets of instance attributes unique in DB
 sob_attrs_unique: dict[str, list[tuple[str]]] = {}

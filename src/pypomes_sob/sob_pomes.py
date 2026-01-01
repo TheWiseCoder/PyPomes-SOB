@@ -9,8 +9,8 @@ from enum import Enum, IntEnum
 from logging import Logger
 from pathlib import Path
 from pypomes_core import (
-    StrEnumUseName,
-    dict_clone, dict_has_value, dict_stringify, exc_format
+    StrEnumUseName, dict_clone, dict_get_key,
+    dict_has_value, dict_stringify, exc_format
 )
 from pypomes_db import (
     DbEngine, db_exists, db_count,
@@ -21,7 +21,7 @@ from typing import Any, Literal, TypeVar
 
 from .sob_config import (
     SOB_BASE_FOLDER, SOB_MAX_THREADS,
-    sob_db_columns, sob_db_specs,
+    sob_db_columns, sob_db_specs, sob_attrs_enum,
     sob_attrs_input, sob_attrs_unique, sob_loggers
 )
 
@@ -32,9 +32,9 @@ Sob = TypeVar("Sob",
 
 class PySob:
     """
-    Root entity for the *SOB* (Simple object) hierarchy.
+    Root entity for the *Sob* (Simple object) hierarchy.
 
-    The *SOB* objects are mapped to a *RDBMS* table, and present relationships within and among themselves
+    The *Sob* objects are mapped to a *RDBMS* table, and present relationships within and among themselves
     typical of the relational paradigm, such as primary and foreign keys, nullability, uniqueness, one-to-many,
     and many-to-many, to mention just a few.
 
@@ -52,7 +52,7 @@ class PySob:
                  committable: bool = None,
                  errors: list[str] = None) -> None:
         """
-        Instantiate a *SOB* object from its subclass.
+        Instantiate a *Sob* object from its subclass.
 
         If loading the corresponding data from storage is desired, *where_data* should be specifed,
         and the criteria therein should yield just one tuple, when used in a *SELECT* statement.
@@ -63,7 +63,7 @@ class PySob:
 
         If provided, *logger* is used, and saved for further usage in operations involving the object instances.
 
-        :param __references: the *SOB* references to load at object instantiation time
+        :param __references: the *Sob* references to load at object instantiation time
         :param where_data: the criteria to load the object's data from the database
         :param db_engine: the reference database engine (uses the default engine, if not provided)
         :param db_conn: optional connection to use (obtains a new one, if not provided)
@@ -300,33 +300,42 @@ class PySob:
         """
         Set the values of the object's attributes as per *data*.
 
-        Keys in *data* not corresponding to actual object's attributes are ignored.
+        Keys in *data* not corresponding to actual object's attributes are ignored, and a warning is logged.
 
         :param data: key/value pairs to set the object with
         """
         cls_name: str = f"{self.__class__.__module__}.{self.__class__.__qualname__}"
+        cls_enums: dict[str, type[IntEnum | StrEnum | StrEnumUseName]] = sob_attrs_enum.get(cls_name)
         logger: Logger = sob_loggers.get(cls_name)
 
-        # traverse the data
+        # HAZARD:
+        #   - values of 'IntEnum' instances cannot be used as attribute names
+        #   - 'ky' being a enum is independent of 'val' being a enum
         for ky, val in data.items():
 
-            # normalize 'ky'
+            # normalize 'ky' to a string
             if isinstance(ky, Enum):
                 if isinstance(ky, IntEnum | StrEnumUseName):
                     ky = ky.name.lower()
                 else:
-                    # HAZARD: values of 'IntEnum' cannot be used as attribute names
                     ky = ky.value.lower()
 
-            # normalize 'val'
-            if isinstance(val, Enum):
-                if isinstance(val, StrEnumUseName):
-                    val = val.name
-                else:
-                    val = val.value
-
-            # register the key/value pair
             if ky in self.__dict__:
+                # normalize 'val'
+                cls_enum: type[IntEnum | StrEnum | StrEnumUseName] = cls_enums.get(ky)
+                # noinspection PyUnreachableCode
+                if cls_enum:
+                    # 'ky' is mapped to 'Enum', and 'val' itself might already be a enum
+                    val = PySob.__to_enum(attr_value=val,
+                                          cls_enum=cls_enum) if not isinstance(val, Enum) else val
+                elif isinstance(val, Enum):
+                    # 'val' is an 'enum', although no 'Enum' mapping exists for 'ky'
+                    if isinstance(val, StrEnumUseName):
+                        val = val.name
+                    else:
+                        val = val.value
+
+                # register the key/value pair
                 self.__dict__[ky] = val
             elif logger:
                 logger.warning(msg=f"'{ky}' is not an attribute of class {cls_name}")
@@ -426,7 +435,7 @@ class PySob:
         The parameter *committable* is relevant only if *db_conn* is provided, and is otherwise ignored.
         A rollback is always attempted, if an error occurs.
 
-        :param __references: the *SOB* references to load
+        :param __references: the *Sob* references to load
         :param omit_nulls: whether to include the attributes with null values
         :param db_engine: the reference database engine (uses the default engine, if not provided)
         :param db_conn: optional connection to use (obtains a new one, if not provided)
@@ -474,13 +483,21 @@ class PySob:
 
         if not errors:
             pk_name: str = sob_db_columns[cls_name][0]
+            cls_enums: dict[str, type[IntEnum | StrEnum | StrEnumUseName]] = sob_attrs_enum.get(cls_name)
             rec: tuple = recs[0]
-            for inx, attr in enumerate(attrs):
+
+            # traverse the attributes, assigning the values retrieved from the database
+            for idx, attr in enumerate(iterable=attrs):
+                cls_enum: type[IntEnum | StrEnum | StrEnumUseName] = cls_enums.get(attr) if cls_enums else None
+                val: Any = PySob.__to_enum(attr_value=rec[idx],
+                                           cls_enum=cls_enum)
                 # PK attribute in DB table might have a different name
                 if attr == pk_name:
-                    self.__dict__["id"] = rec[inx]
+                    self.__dict__["id"] = val
                 else:
-                    self.__dict__[attr] = rec[inx]
+                    self.__dict__[attr] = val
+
+            # load the instance's references
             if __references:
                 result = PySob.__load_references(__references,
                                                  objs=[self],
@@ -551,7 +568,7 @@ class PySob:
                         committable: bool = None,
                         errors: list[str] = None) -> None:
         """
-        Load the *SOB* references specified in *__references* from the database.
+        Load the *Sob* references specified in *__references* from the database.
 
         This operation must be implemented at the subclass level.
 
@@ -559,7 +576,7 @@ class PySob:
         The parameter *committable* is relevant only if *db_conn* is provided, and is otherwise ignored.
         A rollback is always attempted, if an error occurs.
 
-        :param __references: the *SOB* references to load
+        :param __references: the *Sob* references to load
         :param db_engine: the reference database engine (uses the default engine, if not provided)
         :param db_conn: optional connection to use (obtains a new one, if not provided)
         :param committable: whether to commit the database operations upon errorless completion
@@ -586,7 +603,7 @@ class PySob:
                               committable: bool = None,
                               errors: list[str] = None) -> None:
         """
-        Invalidate the object's *SOB* references specified in *__references*.
+        Invalidate the object's *Sob* references specified in *__references*.
 
         Whenever needed, this operation must be implemented at the subclass level.
 
@@ -594,7 +611,7 @@ class PySob:
         The parameter *committable* is relevant only if *db_conn* is provided, and is otherwise ignored.
         A rollback is always attempted, if an error occurs.
 
-        :param __references: the *SOB* references to invalidate
+        :param __references: the *Sob* references to invalidate
         :param db_engine: the reference database engine (uses the default engine, if not provided)
         :param db_conn: optional connection to use (obtains a new one, if not provided)
         :param committable: whether to commit the database operations upon errorless completion
@@ -615,6 +632,7 @@ class PySob:
     @staticmethod
     def initialize(db_specs: tuple[type[StrEnum] | list[str], type[int | str]] |
                              tuple[type[StrEnum] | list[str], type[int], bool],
+                   attrs_enum: dict[StrEnum | str, type[IntEnum | StrEnum | StrEnumUseName]] = None,
                    attrs_unique: list[tuple[str]] = None,
                    attrs_input: list[tuple[str, str]] = None,
                    logger: Logger = None) -> None:
@@ -622,12 +640,16 @@ class PySob:
         Initialize the subclass with required and optional data.
 
         The parameter *db_specs* is a tuple with two or three elements:
-            - list of names used in the class' corresponding database table:
+            - list of names in the class' corresponding database table, preferably encapsulated in a *StrEnum* class:
                 - the first item is the table name
-                - the second itwm is the name of the table's primary key column (mapped to the *id* attribute)
+                - the second item is the name of the table's primary key column (mapped to the *id* attribute)
                 - the remaining items are the column names
             - the type of the primary key (*int* or *str*)
             - if the primary key's type is *int*, whether it is an identity column (defaults to *True*)
+
+        The optional parameter *attrs_enum* lists the *IntEnum* and *StrEnum* instances to which attributes of the
+        class instances are mapped. This is used to instantiate the appropriate *enums* as values for the attributes
+        when loading data from the database.
 
         The optional parameter *attrs_unique* is a list of tuples, each one containing a set of one or more
         attributes whose values guarantee uniqueness in the database table.
@@ -639,6 +661,7 @@ class PySob:
         object instances.
 
         :param db_specs: the attributes mapped to the corresponding database table
+        :param attrs_enum: the *enums* to which attributes of the class instances are mapped
         :param attrs_unique: the sets of attributes defining object's uniqueness in the database
         :param attrs_input: mapping of names used in input to actual attribute names
         :param logger: optional logger
@@ -661,6 +684,10 @@ class PySob:
                 # PK defaults to being an identity attribute in the DB for type 'int'
                 db_specs += (db_specs[1] is int,)
             sob_db_specs[cls_name] = (tbl_name, db_specs[1], db_specs[2])
+
+            # register the mappings of enums to attributes
+            if attrs_enum:
+                sob_attrs_enum.update({cls_name: {str(k): v for k, v in attrs_enum.items()}})
 
             # register the sets of unique attributes
             if attrs_unique:
@@ -767,15 +794,15 @@ class PySob:
 
         if cls:
             # obtain the aliases map
-            aliases: dict[str, str] = PySob.__build_aliases_map(subcls=cls,
-                                                                joins=joins)
+            aliases_map: dict[str, str] = PySob.__build_aliases_map(subcls=cls,
+                                                                    joins=joins)
             # build the FROM clause
             from_clause: str = PySob.__build_from_clause(subcls=cls,
-                                                         aliases=aliases,
+                                                         aliases_map=aliases_map,
                                                          joins=joins)
             # retrieve the data
             where_data = PySob.__add_aliases(attrs=where_data,
-                                             aliases=aliases)
+                                             aliases=aliases_map)
             result = db_count(table=from_clause,
                               count_clause=count_clause,
                               where_clause=where_clause,
@@ -863,15 +890,15 @@ class PySob:
 
         if cls:
             # obtain the aliases map
-            aliases: dict[str, str] = PySob.__build_aliases_map(subcls=cls,
-                                                                joins=joins)
+            aliases_map: dict[str, str] = PySob.__build_aliases_map(subcls=cls,
+                                                                    joins=joins)
             # build the FROM clause
             from_clause: str = PySob.__build_from_clause(subcls=cls,
-                                                         aliases=aliases,
+                                                         aliases_map=aliases_map,
                                                          joins=joins)
             # execute the query
             where_data = PySob.__add_aliases(attrs=where_data,
-                                             aliases=aliases)
+                                             aliases=aliases_map)
             result = db_exists(table=from_clause,
                                where_clause=where_clause,
                                where_vals=where_vals,
@@ -923,10 +950,10 @@ class PySob:
                 - the connector to the next condition ("and" or "or", defaults to "and")
             3. the third element is the type of the join ("inner", "full", "left", "right", defaults to "inner")
 
-        Optionally, selection criteria may be specified in *where_clause* and *where_vals*, or additionally but
-        preferably, by key-value pairs in *where_data*. Care should be exercised if *where_clause* contains *IN*
-        directives. In PostgreSQL, the list of values for an attribute with the *IN* directive must be contained
-        in a specific tuple, and the operation will break for a list of values containing only 1 element.
+        Selection criteria may be specified in *where_clause* and *where_vals*, or additionally but preferably,
+        by key-value pairs in *where_data*. Care should be exercised if *where_clause* contains *IN* directives.
+        In PostgreSQL, the list of values for an attribute with the *IN* directive must be contained in a
+        specific tuple, and the operation will break for a list of values containing only 1 element.
         The safe way to specify *IN* directives is to add them to *where_data*, as the specifics of each DB flavor
         will then be properly dealt with.
 
@@ -948,6 +975,9 @@ class PySob:
         tuples must be returned by the query. The parameter *offset_count* is used to offset the retrieval
         of tuples. For both *offset_count* and *limit_count* to be used together with SQLServer, an *ORDER BY*
         clause must have been specifed, otherwise a runtime error is raised.
+
+        As *attrs* are expected to be attributes of *Sob* subclasses, values retrieved from the database
+        for attributes having *Enum* objects mapped to, are replaced with their corresponding *enums*.
 
         The targer database engine, specified or default, must have been previously configured.
         The parameter *committable* is relevant only if *db_conn* is provided, and is otherwise ignored.
@@ -981,34 +1011,65 @@ class PySob:
 
         if cls:
             # obtain the aliases map
-            aliases: dict[str, str] = PySob.__build_aliases_map(subcls=cls,
-                                                                joins=joins)
+            aliases_map: dict[str, str] = PySob.__build_aliases_map(subcls=cls,
+                                                                    joins=joins)
             # build the FROM clause
             from_clause: str = PySob.__build_from_clause(subcls=cls,
-                                                         aliases=aliases,
+                                                         aliases_map=aliases_map,
                                                          joins=joins)
             # build the aliased attributes list
             aliased_attrs: list[str] = PySob.__add_aliases(attrs=list(attrs),
-                                                           aliases=aliases)
+                                                           aliases=aliases_map)
             # normalize the 'ORDER BY' clause
             if orderby_clause:
                 orderby_clause = PySob.__normalize_orderby(orderby=orderby_clause,
-                                                           aliases=aliases)
+                                                           aliases=aliases_map)
             # retrieve the data
             sel_stmt: str = f"SELECT DISTINCT {', '.join(aliased_attrs)} FROM {from_clause}"
-            result = db_select(sel_stmt=sel_stmt,
-                               where_clause=where_clause,
-                               where_vals=where_vals,
-                               where_data=where_data,
-                               orderby_clause=orderby_clause,
-                               min_count=min_count,
-                               max_count=max_count,
-                               offset_count=offset_count,
-                               limit_count=limit_count,
-                               engine=db_engine,
-                               connection=db_conn,
-                               committable=committable,
-                               errors=errors)
+            recs: list[tuple] = db_select(sel_stmt=sel_stmt,
+                                          where_clause=where_clause,
+                                          where_vals=where_vals,
+                                          where_data=where_data,
+                                          orderby_clause=orderby_clause,
+                                          min_count=min_count,
+                                          max_count=max_count,
+                                          offset_count=offset_count,
+                                          limit_count=limit_count,
+                                          engine=db_engine,
+                                          connection=db_conn,
+                                          committable=committable,
+                                          errors=errors)
+            if recs:
+                # build the list of enums mapped to the attributes
+                has_mapping: bool = False
+                mapped_enums: list[type[IntEnum | StrEnum | StrEnumUseName]] = []
+                for aliased_attr in aliased_attrs:
+                    alias, attr = aliased_attr.split(sep=".")
+                    subcls_name: str = dict_get_key(source=aliases_map,
+                                                    value=alias)
+                    if subcls_name:
+                        cls_enums: dict[str, type[IntEnum | StrEnum | StrEnumUseName]] = \
+                                   sob_attrs_enum.get(subcls_name)
+                        if cls_enums:
+                            cls_enum: type[IntEnum | StrEnum | StrEnumUseName] = cls_enums.get(attr)
+                            mapped_enums.append(cls_enum)
+                            # noinspection PyUnreachableCode
+                            if cls_enum:
+                                has_mapping = True
+                if has_mapping:
+                    # replace values with corresponding enums
+                    result = []
+                    for rec in recs:
+                        rec_list: list = []
+                        for idx, val in enumerate(iterable=rec):
+                            mapped_enum: type[IntEnum | StrEnum | StrEnumUseName] = mapped_enums[idx]
+                            rec_list.append(PySob.__to_enum(attr_value=val,
+                                                            cls_enum=mapped_enum))
+                        result.append(tuple(rec_list))
+
+            if result is None:
+                result = recs
+
         return result
 
     @staticmethod
@@ -1031,7 +1092,7 @@ class PySob:
                    committable: bool = None,
                    errors: list[str] = None) -> Sob | None:
         """
-        Retrieve the single instance of the *SOB* object from the database, as per the criteria provided.
+        Retrieve the single instance of the *Sob* object from the database, as per the criteria provided.
 
         Optionally, *joins* holds a list of tuples specifying the table joins, with the following format:
             1. the first element in the tuple identifies the table:
@@ -1066,7 +1127,7 @@ class PySob:
         The parameter *committable* is relevant only if *db_conn* is provided, and is otherwise ignored.
         A rollback is always attempted, if an error occurs.
 
-        :param __references: the *SOB* references to load at object instantiation time
+        :param __references: the *Sob* references to load at object instantiation time
         :param joins: optional *JOIN* clauses to use
         :param where_clause: optional criteria for tuple selection
         :param where_vals: values to be associated with the selection criteria
@@ -1075,7 +1136,7 @@ class PySob:
         :param db_conn: optional connection to use (obtains a new one, if not provided)
         :param committable: whether to commit the database operations upon errorless completion
         :param errors: incidental error messages (might be a non-empty list)
-        :return: the instantiated *SOB* object, or *None* if not found or error
+        :return: the instantiated *Sob* object, or *None* if not found or error
         """
         # inicialize the return variable
         result: Sob | None = None
@@ -1089,20 +1150,20 @@ class PySob:
 
         if cls:
             # obtain the aliases map
-            aliases: dict[str, str] = PySob.__build_aliases_map(subcls=cls,
-                                                                joins=joins)
+            aliases_map: dict[str, str] = PySob.__build_aliases_map(subcls=cls,
+                                                                    joins=joins)
             # build the FROM clause
             from_clause: str = PySob.__build_from_clause(subcls=cls,
-                                                         aliases=aliases,
+                                                         aliases_map=aliases_map,
                                                          joins=joins)
             # build the attributes list
-            alias: str = aliases.get(cls.__qualname__)
+            alias: str = aliases_map.get(cls.__qualname__)
             cls_name: str = f"{cls.__module__}.{cls.__qualname__}"
             attrs: list[str] = [f"{alias}.{attr}" for attr in sob_db_columns.get(cls_name)]
 
             # retrieve the data
             where_data = PySob.__add_aliases(attrs=where_data,
-                                             aliases=aliases)
+                                             aliases=aliases_map)
             sel_stmt: str = f"SELECT {', '.join(attrs)} FROM {from_clause}"
             recs: list[tuple[int | str]] = db_select(sel_stmt=sel_stmt,
                                                      where_clause=where_clause,
@@ -1118,8 +1179,8 @@ class PySob:
                 # build the SOB object
                 sob: Sob = cls()
                 data: dict[str, Any] = {}
-                for inx, attr in enumerate(sob_db_columns.get(cls_name)):
-                    data[attr] = recs[0][inx]
+                for idx, attr in enumerate(iterable=sob_db_columns.get(cls_name)):
+                    data[attr] = recs[0][idx]
                     sob.set(data=data)
 
                 if not __references or PySob.__load_references(__references,
@@ -1160,7 +1221,7 @@ class PySob:
                  committable: bool = None,
                  errors: list[str] = None) -> list[Sob] | None:
         """
-        Retrieve the instances of *SOB* objects from the database, as per the criteria provided.
+        Retrieve the instances of *Sob* objects from the database, as per the criteria provided.
 
         Optionally, *joins* holds a list of tuples specifying the table joins, with the following format:
             1. the first element in the tuple identifies the table:
@@ -1202,7 +1263,7 @@ class PySob:
         The parameter *committable* is relevant only if *db_conn* is provided, and is otherwise ignored.
         A rollback is always attempted, if an error occurs.
 
-        :param __references: the *SOB* references to load at object instantiation time
+        :param __references: the *Sob* references to load at object instantiation time
         :param joins: optional *JOIN* clauses to use
         :param where_clause: optional criteria for tuple selection
         :param where_vals: values to be associated with the selection criteria
@@ -1230,24 +1291,24 @@ class PySob:
 
         if cls:
             # obtain the aliases map
-            aliases: dict[str, str] = PySob.__build_aliases_map(subcls=cls,
-                                                                joins=joins)
+            aliases_map: dict[str, str] = PySob.__build_aliases_map(subcls=cls,
+                                                                    joins=joins)
             # build the FROM clause
             from_clause: str = PySob.__build_from_clause(subcls=cls,
-                                                         aliases=aliases,
+                                                         aliases_map=aliases_map,
                                                          joins=joins)
             # build the attributes list
-            alias: str = aliases.get(cls.__qualname__)
+            alias: str = aliases_map.get(cls.__qualname__)
             cls_name: str = f"{cls.__module__}.{cls.__qualname__}"
             attrs: list[str] = [f"{alias}.{attr}" for attr in sob_db_columns.get(cls_name)]
 
             # normalize the 'ORDER BY' clause
             if orderby_clause:
                 orderby_clause = PySob.__normalize_orderby(orderby=orderby_clause,
-                                                           aliases=aliases)
+                                                           aliases=aliases_map)
             # retrieve the data
             where_data = PySob.__add_aliases(attrs=where_data,
-                                             aliases=aliases)
+                                             aliases=aliases_map)
             sel_stmt: str = f"SELECT DISTINCT {', '.join(attrs)} FROM {from_clause}"
             recs: list[tuple[int | str]] = db_select(sel_stmt=sel_stmt,
                                                      where_clause=where_clause,
@@ -1267,8 +1328,8 @@ class PySob:
                 objs: list[Sob] = []
                 for rec in recs:
                     data: dict[str, Any] = {}
-                    for inx, attr in enumerate(sob_db_columns.get(cls_name)):
-                        data[attr] = rec[inx]
+                    for idx, attr in enumerate(iterable=sob_db_columns.get(cls_name)):
+                        data[attr] = rec[idx]
                     sob: type[Sob] = cls()
                     sob.set(data=data)
                     objs.append(sob)
@@ -1444,19 +1505,19 @@ class PySob:
 
             # register the invoking class first
             PySob.__register_class_alias(subcls=cls,
-                                         aliases=aliases)
+                                         aliases_map=aliases)
 
             # then the list of *Sob* subclasses
             if classes:
                 for subcls in classes:
                     PySob.__register_class_alias(subcls=subcls,
-                                                 aliases=aliases)
+                                                 aliases_map=aliases)
             # then the attributes
             for attr in attrs:
                 if isinstance(attr, StrEnum):
                     subcls = attr.__class__
                     PySob.__register_class_alias(subcls=subcls,
-                                                 aliases=aliases)
+                                                 aliases_map=aliases)
             # add the aliases
             result = PySob.__add_aliases(attrs=attrs,
                                          aliases=aliases)
@@ -1485,7 +1546,7 @@ class PySob:
             3. the third element is the type of the join ("inner", "full", "left", "right", defaults to "inner")
 
         :param joins: the list of *JOIN* clauses
-        :param classes: optional list of *SOB* subclasses to assist with alias determination
+        :param classes: optional list of *Sob* subclasses to assist with alias determination
         :param errors: incidental error messages (might be a non-empty list)
         :return: the *FROM* clause containing the *JOIN*s
         """
@@ -1497,12 +1558,12 @@ class PySob:
 
         if cls:
             # obtain the aliases map
-            aliases: dict[str, str] = PySob.__build_aliases_map(subcls=cls,
-                                                                joins=joins,
-                                                                classes=classes)
+            aliases_map: dict[str, str] = PySob.__build_aliases_map(subcls=cls,
+                                                                    joins=joins,
+                                                                    classes=classes)
             # build the 'FROM' clause
             result = PySob.__build_from_clause(subcls=cls,
-                                               aliases=aliases,
+                                               aliases_map=aliases_map,
                                                joins=joins)
         return result
 
@@ -1596,23 +1657,23 @@ class PySob:
 
         # register the alias for the master subclass
         PySob.__register_class_alias(subcls=subcls,
-                                     aliases=result)
+                                     aliases_map=result)
         # register the subclasses
         for cls in classes or []:
             PySob.__register_class_alias(subcls=cls,
-                                         aliases=result)
+                                         aliases_map=result)
 
         # traverse the joins (only the first element in each tuple is relevant)
         for join in joins or []:
             join_cls: type[Sob] = join[0]
             PySob.__register_class_alias(subcls=join_cls,
-                                         aliases=result)
+                                         aliases_map=result)
         return result
 
     # noinspection PyPep8
     @staticmethod
     def __build_from_clause(subcls: type[Sob],
-                            aliases: dict[str, str],
+                            aliases_map: dict[str, str],
                             joins: list[tuple[type[Sob],
                                               list[tuple[StrEnum, StrEnum,
                                                          Literal["=", "<>", "<=", ">="] | None,
@@ -1633,7 +1694,7 @@ class PySob:
             3. the third element is the type of the join ("inner", "full", "left", "right", defaults to "inner")
 
         :param subcls: the reference *Sob* subclass
-        :param aliases: mapping of *Sob* subclasses to aliases
+        :param aliases_map: mapping of *Sob* subclasses to aliases
         :param joins: the list of *JOIN* clauses
         :return: the *FROM* clause containing the *JOIN*s
         """
@@ -1641,13 +1702,13 @@ class PySob:
         cls_name: str = f"{subcls.__module__}.{subcls.__qualname__}"
 
         # initialize the return variable
-        result: str = sob_db_specs[cls_name][0] + " AS " + aliases.get(subcls.__qualname__)
+        result: str = sob_db_specs[cls_name][0] + " AS " + aliases_map.get(subcls.__qualname__)
 
         # traverse the joins
         for join in joins or []:
             join_cls: str = f"{join[0].__module__}.{join[0].__qualname__}"
             table_name: str = sob_db_specs[join_cls][0]
-            join_alias: str = aliases.get(join_cls[join_cls.rindex(".")+1:])
+            join_alias: str = aliases_map.get(join_cls[join_cls.rindex(".") + 1:])
             join_mode: str = join[3].upper() if len(join) > 3 else "INNER"
             result += f" {join_mode} JOIN {table_name} AS {join_alias} ON "
 
@@ -1656,9 +1717,9 @@ class PySob:
             for on_spec in on_specs:
                 op: str = on_spec[2] if len(on_spec) > 2 and on_spec[2] in ["=", "<>", "<=", ">="] else "="
                 result += (PySob.__add_alias(attr=on_spec[0],
-                                             aliases=aliases) + " " + op + " " +
+                                             aliases=aliases_map) + " " + op + " " +
                            PySob.__add_alias(attr=on_spec[1],
-                                             aliases=aliases))
+                                             aliases=aliases_map))
                 con: str = on_spec[-1].upper() if  len(on_spec) > 2 and on_spec[-1] in ["and", "or"] else "AND"
                 result += " " + con + " "
             result = result[:-5] if result.endswith(" AND ") else result[:-4]
@@ -1769,7 +1830,7 @@ class PySob:
 
     @staticmethod
     def __register_class_alias(subcls: type[Sob],
-                               aliases: dict[str, str]) -> None:
+                               aliases_map: dict[str, str]) -> None:
         """
         Register the alias for the *Sob* subclass *subcls*.
 
@@ -1778,13 +1839,13 @@ class PySob:
         are added to the alias, until the alias becomes unique.
 
         :param subcls: the reference *Sob* subclass
-        :param aliases: the aliases registry
+        :param aliases_map: the aliases registry
         """
         subcls_name: str = subcls.__qualname__.rsplit(".", 1)[0]
-        if subcls_name not in aliases:
+        if subcls_name not in aliases_map:
             cls_alias: str = "".join([c for c in subcls_name if c.isupper()]).lower()
             pos: int = 0
-            while dict_has_value(source=aliases,
+            while dict_has_value(source=aliases_map,
                                  value=cls_alias):
                 remainder: str = subcls_name[pos:]
                 for c in remainder:
@@ -1792,7 +1853,7 @@ class PySob:
                     if c.islower():
                         cls_alias += c
                         break
-            aliases[subcls_name] = cls_alias
+            aliases_map[subcls_name] = cls_alias
 
     @staticmethod
     def __load_references(__references:  type[Sob | list[Sob]] | list[type[Sob | list[Sob]]],
@@ -1803,13 +1864,13 @@ class PySob:
                           committable: bool | None,
                           errors: list[str]) -> bool | None:
         """
-        Load the *SOB* references specified in *__references* from the database.
+        Load the *Sob* references specified in *__references* from the database.
 
         The targer database engine, specified or default, must have been previously configured.
         The parameter *committable* is relevant only if *db_conn* is provided, and is otherwise ignored.
         A rollback is always attempted, if an error occurs.
 
-        :param __references: the *SOB* references to load
+        :param __references: the *Sob* references to load
         :param db_engine: the reference database engine (uses the default engine, if not provided)
         :param db_conn: optional connection to use (obtains a new one, if not provided)
         :param committable: whether to commit the database operations upon errorless completion
@@ -1859,5 +1920,28 @@ class PySob:
             result = None
             if isinstance(errors, list):
                 errors.extend(curr_errors)
+
+        return result
+
+    @staticmethod
+    def __to_enum(attr_value: Any,
+                  cls_enum: type[IntEnum | StrEnum | StrEnumUseName] | None) -> Any:
+        """
+        Retrieve the *Enum* instance corresponding to the attribute with value given by *attr_value*.
+
+        :param attr_value: the value of the reference attribute
+        :param cls_enum: the *enum* mapped to the reference attribute
+        :return: the *Enum* instance corresponding to the reference attribute, or *attr_value* if not found
+        """
+        # initialize the return variable
+        result: Any = attr_value
+
+        if attr_value and cls_enum:
+            for e in cls_enum:
+                if (attr_value == e.value and
+                    issubclass(cls_enum, StrEnum) and not issubclass(cls_enum, StrEnumUseName)) or \
+                   (attr_value.lower() == e.name.lower() and issubclass(cls_enum, IntEnum | StrEnumUseName)):
+                    result = e
+                    break
 
         return result
