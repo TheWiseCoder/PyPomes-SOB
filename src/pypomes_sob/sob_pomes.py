@@ -2,14 +2,14 @@ from __future__ import annotations  # allow forward references
 import sys
 from concurrent import futures
 from concurrent.futures import Future, ThreadPoolExecutor
-from enum import StrEnum
+from enum import Enum, IntEnum, StrEnum
 from importlib import import_module
 from inspect import FrameInfo, stack
-from enum import Enum, IntEnum
 from logging import Logger
 from pathlib import Path
 from pypomes_core import (
-    StrEnumUseName, dict_clone, dict_get_key,
+    StrEnumUseName,
+    dict_clone, dict_get_key,
     dict_has_value, dict_stringify, exc_format
 )
 from pypomes_db import (
@@ -305,7 +305,7 @@ class PySob:
         :param data: key/value pairs to set the object with
         """
         cls_name: str = f"{self.__class__.__module__}.{self.__class__.__qualname__}"
-        cls_enums: dict[str, type[IntEnum | StrEnum | StrEnumUseName]] = sob_attrs_enum.get(cls_name)
+        cls_enums: dict[str, type[IntEnum | StrEnum]] = sob_attrs_enum.get(cls_name)
         logger: Logger = sob_loggers.get(cls_name)
 
         # HAZARD:
@@ -322,7 +322,7 @@ class PySob:
 
             if ky in self.__dict__:
                 # normalize 'val'
-                cls_enum: type[IntEnum | StrEnum | StrEnumUseName] = cls_enums.get(ky)
+                cls_enum: type[IntEnum | StrEnum] = cls_enums.get(ky)
                 # noinspection PyUnreachableCode
                 if cls_enum:
                     # 'ky' is mapped to 'Enum', and 'val' itself might already be a enum
@@ -483,12 +483,12 @@ class PySob:
 
         if not errors:
             pk_name: str = sob_db_columns[cls_name][0]
-            cls_enums: dict[str, type[IntEnum | StrEnum | StrEnumUseName]] = sob_attrs_enum.get(cls_name)
+            cls_enums: dict[str, type[IntEnum | StrEnum]] = sob_attrs_enum.get(cls_name)
             rec: tuple = recs[0]
 
             # traverse the attributes, assigning the values retrieved from the database
             for idx, attr in enumerate(iterable=attrs):
-                cls_enum: type[IntEnum | StrEnum | StrEnumUseName] = cls_enums.get(attr) if cls_enums else None
+                cls_enum: type[IntEnum | StrEnum] = cls_enums.get(attr) if cls_enums else None
                 val: Any = PySob.__to_enum(attr_value=rec[idx],
                                            cls_enum=cls_enum)
                 # PK attribute in DB table might have a different name
@@ -632,7 +632,7 @@ class PySob:
     @staticmethod
     def initialize(db_specs: tuple[type[StrEnum] | list[str], type[int | str]] |
                              tuple[type[StrEnum] | list[str], type[int], bool],
-                   attrs_enum: dict[StrEnum | str, type[IntEnum | StrEnum | StrEnumUseName]] = None,
+                   attrs_enum: dict[StrEnum | str, type[IntEnum | StrEnum]] = None,
                    attrs_unique: list[tuple[str]] = None,
                    attrs_input: list[tuple[str, str]] = None,
                    logger: Logger = None) -> None:
@@ -1042,16 +1042,16 @@ class PySob:
             if recs:
                 # build the list of enums mapped to the attributes
                 has_mapping: bool = False
-                mapped_enums: list[type[IntEnum | StrEnum | StrEnumUseName]] = []
+                mapped_enums: list[type[IntEnum | StrEnum]] = []
                 for aliased_attr in aliased_attrs:
                     alias, attr = aliased_attr.split(sep=".")
                     subcls_name: str = dict_get_key(source=aliases_map,
                                                     value=alias)
                     if subcls_name:
-                        cls_enums: dict[str, type[IntEnum | StrEnum | StrEnumUseName]] = \
+                        cls_enums: dict[str, type[IntEnum | StrEnum]] = \
                                    sob_attrs_enum.get(subcls_name)
                         if cls_enums:
-                            cls_enum: type[IntEnum | StrEnum | StrEnumUseName] = cls_enums.get(attr)
+                            cls_enum: type[IntEnum | StrEnum] = cls_enums.get(attr)
                             mapped_enums.append(cls_enum)
                             # noinspection PyUnreachableCode
                             if cls_enum:
@@ -1062,7 +1062,7 @@ class PySob:
                     for rec in recs:
                         rec_list: list = []
                         for idx, val in enumerate(iterable=rec):
-                            mapped_enum: type[IntEnum | StrEnum | StrEnumUseName] = mapped_enums[idx]
+                            mapped_enum: type[IntEnum | StrEnum] = mapped_enums[idx]
                             rec_list.append(PySob.__to_enum(attr_value=val,
                                                             cls_enum=mapped_enum))
                         result.append(tuple(rec_list))
@@ -1925,7 +1925,7 @@ class PySob:
 
     @staticmethod
     def __to_enum(attr_value: Any,
-                  cls_enum: type[IntEnum | StrEnum | StrEnumUseName] | None) -> Any:
+                  cls_enum: type[IntEnum | StrEnum] | None) -> Any:
         """
         Retrieve the *Enum* instance corresponding to the attribute with value given by *attr_value*.
 
