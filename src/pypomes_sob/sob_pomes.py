@@ -110,7 +110,7 @@ class PySob:
         """
         # prepare data for INSERT
         return_col: dict[str, type] | None = None
-        insert_data: dict[str, Any] = self.get()
+        insert_data: dict[str, Any] = self.get(revert_enums=True)
         cls_name: str = f"{self.__class__.__module__}.{self.__class__.__qualname__}"
         is_identity: bool = sob_db_specs[cls_name][2]
         if is_identity:
@@ -165,7 +165,8 @@ class PySob:
         cls_name: str = f"{self.__class__.__module__}.{self.__class__.__qualname__}"
         pk_name: str = sob_db_columns[cls_name][0]
         tbl_name: str = sob_db_specs[cls_name][0]
-        update_data: dict[str, Any] = self.get(omit_nulls=False)
+        update_data: dict[str, Any] = self.get(omit_nulls=False,
+                                               revert_enums=True)
         key: int | str = update_data.pop(pk_name)
 
         # make sure to have an errors list
@@ -244,7 +245,7 @@ class PySob:
         if self.id:
             where_data = {pk_name: self.id}
         else:
-            where_data = self.get()
+            where_data = self.get(revert_enums=True)
             where_data.pop(pk_name, None)
 
         # make sure to have an errors list
@@ -274,25 +275,38 @@ class PySob:
             self.__dict__[key] = None
 
     def get(self,
-            omit_nulls: bool = True) -> dict[str, Any]:
+            omit_nulls: bool = True,
+            revert_enums: bool = False) -> dict[str, Any]:
         """
         Retrieve the names and current values of all the object's attributes, and return them in a *dict*.
 
         Note that only the public attributes are returned. Attributes starting with '_' (*underscore*) are omitted.
 
-        :param omit_nulls: whether to include the attributes with null values
+        :param omit_nulls: whether to include the attributes with null values (defaults to *True*)
+        :param revert_enums: whether to revert enums to their corresponding literal values (defaults to *False*)
         :return: key/value pairs of the names and current values of the object's public attributes
         """
         # initialize the return variable
         result: dict[str, Any] = {}
 
-        cls_name: str = f"{self.__class__.__module__}.{self.__class__.__qualname__}"
         if not (omit_nulls and self.id is None):
             # PK attribute in DB table might have a different name
+            cls_name: str = f"{self.__class__.__module__}.{self.__class__.__qualname__}"
             pk_name: str = sob_db_columns[cls_name][0]
             result[pk_name] = self.id
-        result.update({k: v for k, v in self.__dict__.items()
-                      if k.islower() and not (k.startswith("_") or k == "id" or (omit_nulls and v is None))})
+
+        if revert_enums:
+            for k, v in self.__dict__.items():
+                if k.islower() and not (k.startswith("_") or k == "id" or (omit_nulls and v is None)):
+                    if not isinstance(v, Enum):
+                        result[k] = v
+                    elif isinstance(v, StrEnumUseName):
+                        result[k] = v.name
+                    else:
+                        result[k] = v.value
+        else:
+            result.update({k: v for k, v in self.__dict__.items()
+                          if k.islower() and not (k.startswith("_") or k == "id" or (omit_nulls and v is None))})
         return result
 
     def set(self,
@@ -400,7 +414,7 @@ class PySob:
         where_data: dict[str, Any] = self.get_unique_attrs()
         if not where_data:
             # use object's available data
-            where_data = self.get()
+            where_data = self.get(revert_enums=True)
 
         # execute the query
         if where_data:
@@ -453,7 +467,8 @@ class PySob:
         where_data: dict[str, Any] = self.get_unique_attrs()
         if not where_data:
             # use object's available data
-            where_data = self.get(omit_nulls=omit_nulls)
+            where_data = self.get(omit_nulls=omit_nulls,
+                                  revert_enums=True)
 
         # make sure to have an errors list
         if not isinstance(errors, list):
@@ -1463,7 +1478,7 @@ class PySob:
             cls_name: str = f"{cls.__module__}.{cls.__qualname__}"
             tbl_name: str = sob_db_specs[cls_name][0]
 
-            # persis the data
+            # persist the data
             result = db_insert(insert_stmt=f"INSERT INTO {tbl_name}",
                                insert_data=insert_data,
                                return_cols=return_cols,
@@ -1616,10 +1631,9 @@ class PySob:
                     aliased_attr: str = PySob.__prefix_alias(attr=attr[0],
                                                              aliases=aliases)
                     if isinstance(attr, list):
-                        attr = [aliased_attr, *attr[1:]]
+                        result[[aliased_attr, *attr[1:]]] = val
                     else:
-                        attr = (aliased_attr, *attr[1:])
-                    result[attr] = val
+                        result[(aliased_attr, *attr[1:])] = val
                 else:
                     aliased_attr: str = PySob.__prefix_alias(attr=attr,
                                                              aliases=aliases)
