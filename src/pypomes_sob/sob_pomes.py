@@ -8,9 +8,7 @@ from inspect import FrameInfo, stack
 from logging import Logger
 from pathlib import Path
 from pypomes_core import (
-    StrEnumUseName,
-    dict_clone, dict_get_key,
-    dict_has_value, dict_stringify, exc_format
+    StrEnumUseName, dict_stringify, exc_format
 )
 from pypomes_db import (
     DbEngine, db_exists, db_count,
@@ -110,13 +108,14 @@ class PySob:
         """
         # prepare data for INSERT
         return_col: dict[str, type] | None = None
-        insert_data: dict[str, Any] = self.get(revert_enums=True)
+        insert_data: dict[str, Any] = self.get(omit_nulls=True,
+                                               keep_enums=False)
         cls_name: str = f"{self.__class__.__module__}.{self.__class__.__qualname__}"
-        is_identity: bool = sob_db_specs[cls_name][2]
+        is_identity: bool = sob_db_specs[cls_name][3]
         if is_identity:
             # PK is an identity column
             pk_name: str = sob_db_columns[cls_name][0]
-            pk_type: type = sob_db_specs[cls_name][1]
+            pk_type: type = sob_db_specs[cls_name][2]
             insert_data.pop(pk_name, None)
             return_col = {pk_name: pk_type}
 
@@ -166,7 +165,7 @@ class PySob:
         pk_name: str = sob_db_columns[cls_name][0]
         tbl_name: str = sob_db_specs[cls_name][0]
         update_data: dict[str, Any] = self.get(omit_nulls=False,
-                                               revert_enums=True)
+                                               keep_enums=False)
         key: int | str = update_data.pop(pk_name)
 
         # make sure to have an errors list
@@ -245,8 +244,8 @@ class PySob:
         if self.id:
             where_data = {pk_name: self.id}
         else:
-            where_data = self.get(revert_enums=True)
-            where_data.pop(pk_name, None)
+            where_data = self.get(omit_nulls=True,
+                                  keep_enums=False)
 
         # make sure to have an errors list
         if not isinstance(errors, list):
@@ -276,14 +275,14 @@ class PySob:
 
     def get(self,
             omit_nulls: bool = True,
-            revert_enums: bool = False) -> dict[str, Any]:
+            keep_enums: bool = True) -> dict[str, Any]:
         """
         Retrieve the names and current values of all the object's attributes, and return them in a *dict*.
 
         Note that only the public attributes are returned. Attributes starting with '_' (*underscore*) are omitted.
 
         :param omit_nulls: whether to include the attributes with null values (defaults to *True*)
-        :param revert_enums: whether to revert enums to their corresponding literal values (defaults to *False*)
+        :param keep_enums: whether to use the enums, rather then their literal values (defaults to *True*)
         :return: key/value pairs of the names and current values of the object's public attributes
         """
         # initialize the return variable
@@ -295,7 +294,10 @@ class PySob:
             pk_name: str = sob_db_columns[cls_name][0]
             result[pk_name] = self.id
 
-        if revert_enums:
+        if keep_enums:
+            result.update({k: v for k, v in self.__dict__.items()
+                          if k.islower() and not (k.startswith("_") or k == "id" or (omit_nulls and v is None))})
+        else:
             for k, v in self.__dict__.items():
                 if k.islower() and not (k.startswith("_") or k == "id" or (omit_nulls and v is None)):
                     if not isinstance(v, Enum):
@@ -304,9 +306,6 @@ class PySob:
                         result[k] = v.name
                     else:
                         result[k] = v.value
-        else:
-            result.update({k: v for k, v in self.__dict__.items()
-                          if k.islower() and not (k.startswith("_") or k == "id" or (omit_nulls and v is None))})
         return result
 
     def set(self,
@@ -354,7 +353,7 @@ class PySob:
             elif logger:
                 logger.warning(msg=f"'{ky}' is not an attribute of class {cls_name}")
 
-    def get_inputs(self) -> dict[str, Any] | None:
+    def get_inputs(self) -> dict[str | StrEnum, Any] | None:
         """
         Retrieve the input names and current values of the object's attributes, and return them in a *dict*.
 
@@ -365,17 +364,17 @@ class PySob:
         :return: key/value pairs of the object's input names and current values, or *None* if not mapped
         """
         # initialize the return variable
-        result: dict[str, Any] | None = None
+        result: dict[str | StrEnum, Any] | None = None
 
         # obtain the mapping of input names to attributes
         cls_name: str = f"{self.__class__.__module__}.{self.__class__.__qualname__}"
-        mapping: list[tuple[str, str]] = sob_attrs_input.get(cls_name)
+        mapping: list[tuple[str | StrEnum, str]] = sob_attrs_input.get(cls_name)
         if mapping:
-            # obtain the instance's non-null data
-            data: dict[str, Any] = self.get()
-            if data:
-                result = dict_clone(source=data,
-                                    from_to_keys=[(t[1], t[0]) for t in mapping if t[1]])
+            for input_, attr in mapping:
+                if attr:
+                    val: Any = self.__dict__.get(attr)
+                    if val is not None:
+                        result[input_] = val
         return result
 
     def is_persisted(self,
@@ -414,8 +413,8 @@ class PySob:
         where_data: dict[str, Any] = self.get_unique_attrs()
         if not where_data:
             # use object's available data
-            where_data = self.get(revert_enums=True)
-
+            where_data = self.get(omit_nulls=True,
+                                  keep_enums=False)
         # execute the query
         if where_data:
             result = db_exists(table=tbl_name,
@@ -462,13 +461,14 @@ class PySob:
 
         cls_name: str = f"{self.__class__.__module__}.{self.__class__.__qualname__}"
         tbl_name: str = sob_db_specs[cls_name][0]
+        logger: Logger = sob_loggers.get(cls_name)
 
         # build the WHERE clause
         where_data: dict[str, Any] = self.get_unique_attrs()
         if not where_data:
             # use object's available data
             where_data = self.get(omit_nulls=omit_nulls,
-                                  revert_enums=True)
+                                  keep_enums=False)
 
         # make sure to have an errors list
         if not isinstance(errors, list):
@@ -491,7 +491,6 @@ class PySob:
                 msg = "More than one record"
             if msg:
                 msg += f" found on table {tbl_name} for {dict_stringify(where_data)}"
-                logger: Logger = sob_loggers.get(cls_name)
                 if logger:
                     logger.error(msg=msg)
                 errors.append(msg)
@@ -501,19 +500,24 @@ class PySob:
             cls_enums: dict[str, type[IntEnum | StrEnum]] = sob_attrs_enum.get(cls_name, {})
             rec: tuple = recs[0]
 
-            # traverse the attributes, assigning the values retrieved from the database
+            # traverse the attributes, assigning to the instance the values retrieved from the database
             for idx, attr in enumerate(iterable=attrs):
                 cls_enum: type[IntEnum | StrEnum] = cls_enums.get(attr)
                 val: Any = PySob.__to_enum(attr_value=rec[idx],
                                            cls_enum=cls_enum)
-                # PK attribute in DB table might have a different name
+                # PK attribute in DB table is usually 'id', but might have a different name
                 if attr == pk_name:
-                    self.__dict__["id"] = val
-                else:
+                    self.id = val
+                elif attr in self.__dict__:
                     self.__dict__[attr] = val
+                else:
+                    # HAZARD: instance attributes not correctly mapped to DB columns at object initialization time
+                    msg: str = f"Attribute '{attr}' not found in instance of class {cls_name}"
+                    if logger:
+                        logger.error(msg=msg)
 
             # load the instance's references
-            if __references:
+            if not errors and __references:
                 result = PySob.__load_references(__references,
                                                  objs=[self],
                                                  db_engine=db_engine,
@@ -524,22 +528,25 @@ class PySob:
 
     def get_columns(self) -> list[str]:
         """
-        Retrieve the names of the object's public attributes as mapped to its corresponding database table.
+        Retrieve the names of the object's public attributes as mapped to the corresponding database table.
 
         :return: a list with the names of the object's attributes as mapped to a database table.
         """
-        # PK attribute in DB table might have a different name
         cls_name: str = f"{self.__class__.__module__}.{self.__class__.__qualname__}"
-        pk_name: str = sob_db_columns[cls_name][0]
+        return list(sob_db_columns[cls_name])
 
-        result: list[str] = []
-        for key in self.__dict__:
-            if key == "id":
-                result.append(pk_name)
-            elif key.islower() and not key.startswith("_"):
-                result.append(key)
-
-        return result
+        # alternatively, the following code would retrieve the DB columns from the class instance:
+        # cls_name: str = f"{self.__class__.__module__}.{self.__class__.__qualname__}"
+        # pk_name: str = sob_db_columns[cls_name][0]
+        #
+        # result: list[str] = []
+        # for key in self.__dict__:
+        #     if key == "id":
+        #         result.append(pk_name)
+        #     elif key.islower() and not key.startswith("_"):
+        #         result.append(key)
+        #
+        # return result
 
     def get_unique_attrs(self) -> dict[str, Any]:
         """
@@ -648,9 +655,9 @@ class PySob:
     @staticmethod
     def initialize(db_specs: tuple[type[StrEnum] | list[str], type[int | str]] |
                              tuple[type[StrEnum] | list[str], type[int], bool],
-                   attrs_enum: dict[StrEnum | str, type[IntEnum | StrEnum]] = None,
-                   attrs_unique: list[tuple[str]] = None,
-                   attrs_input: list[tuple[str, str]] = None,
+                   attrs_enum: dict[str | StrEnum, type[IntEnum | StrEnum]] = None,
+                   attrs_unique: list[tuple[str | StrEnum]] = None,
+                   attrs_input: list[tuple[str | StrEnum, str | StrEnum]] = None,
                    logger: Logger = None) -> None:
         """
         Initialize the subclass with required and optional data.
@@ -668,7 +675,7 @@ class PySob:
         when loading data from the database.
 
         The optional parameter *attrs_unique* is a list of tuples, each one containing a set of one or more
-        attributes whose values guarantee uniqueness in the database table.
+        attributes whose values guarantee tuple uniqueness in the database table.
 
         The optional parameter *attrs_input* maps names used in input operations to the actual names of the
         attributes. It is not required that it be complete, as it might map only a subset of attributes.
@@ -689,30 +696,32 @@ class PySob:
             # retrieve the list of DB names
             cls_name: str = f"{cls.__module__}.{cls.__qualname__}"
             attrs: list[str] = [attr.value for attr in db_specs[0]] \
-                if isinstance(db_specs[0], type) else db_specs[0].copy()
+                if issubclass(db_specs[0], StrEnum) else db_specs[0].copy()
             tbl_name: str = attrs.pop(0)
+            tbl_alias = PySob.__make_alias(tbl_name=tbl_name)
 
-            # register the names of DB columnns
+            # register the names of DB columnns (first column is the PK)
             sob_db_columns.update({cls_name: tuple(attrs)})
 
-            # register the DB specs (table, PK type, PK entity state)
-            if len(db_specs) == 2:
+            # register the DB specs (table name, table alias, PK type, PK entity state)
+            if len(db_specs) > 2:
+                sob_db_specs[cls_name] = (tbl_name, tbl_alias, db_specs[1], db_specs[2])
+            else:
                 # PK defaults to being an identity attribute in the DB for type 'int'
-                db_specs += (db_specs[1] is int,)
-            sob_db_specs[cls_name] = (tbl_name, db_specs[1], db_specs[2])
+                sob_db_specs[cls_name] = (tbl_name, tbl_alias, db_specs[1], db_specs[1] is int)
 
             # register the mappings of enums to attributes
             if attrs_enum:
-                sob_attrs_enum.update({cls_name: {str(k): v for k, v in attrs_enum.items()}})
-
+                sob_attrs_enum.update({cls_name: {str(k): v
+                                                  for k, v in attrs_enum.items()}})
             # register the sets of unique attributes
             if attrs_unique:
-                sob_attrs_unique.update({cls_name: attrs_unique})
-
+                sob_attrs_unique.update({cls_name: [tuple([str(attr) for attr in attrs])
+                                                    for attrs in attrs_unique]})
             # register the names used for data input
             if attrs_input:
-                sob_attrs_input.update({cls_name: attrs_input})
-
+                sob_attrs_input.update({cls_name: [(attrs[0], str(attrs[1]) if attrs[1] else None)
+                                                   for attrs in attrs_input]})
             if logger:
                 sob_loggers[cls_name] = logger
                 logger.debug(msg=f"Inicialized access data for class {cls_name}")
@@ -809,16 +818,11 @@ class PySob:
         cls: type[Sob] = PySob.__get_invoking_class(errors=errors)
 
         if cls:
-            # obtain the aliases map
-            aliases_map: dict[str, str] = PySob.__build_aliases_map(subcls=cls,
-                                                                    joins=joins)
             # build the FROM clause
             from_clause: str = PySob.__build_from_clause(subcls=cls,
-                                                         aliases_map=aliases_map,
                                                          joins=joins)
             # retrieve the data
-            where_data = PySob.__prefix_aliases(attrs=where_data,
-                                                aliases=aliases_map)
+            where_data = PySob.prepend_aliases(attrs=where_data)
             result = db_count(table=from_clause,
                               count_clause=count_clause,
                               where_clause=where_clause,
@@ -905,16 +909,11 @@ class PySob:
         cls: type[Sob] = PySob.__get_invoking_class(errors=errors)
 
         if cls:
-            # obtain the aliases map
-            aliases_map: dict[str, str] = PySob.__build_aliases_map(subcls=cls,
-                                                                    joins=joins)
             # build the FROM clause
             from_clause: str = PySob.__build_from_clause(subcls=cls,
-                                                         aliases_map=aliases_map,
                                                          joins=joins)
             # execute the query
-            where_data = PySob.__prefix_aliases(attrs=where_data,
-                                                aliases=aliases_map)
+            where_data = PySob.prepend_aliases(attrs=where_data)
             result = db_exists(table=from_clause,
                                where_clause=where_clause,
                                where_vals=where_vals,
@@ -1026,20 +1025,14 @@ class PySob:
         cls: type[Sob] = PySob.__get_invoking_class(errors=errors)
 
         if cls:
-            # obtain the aliases map
-            aliases_map: dict[str, str] = PySob.__build_aliases_map(subcls=cls,
-                                                                    joins=joins)
             # build the FROM clause
             from_clause: str = PySob.__build_from_clause(subcls=cls,
-                                                         aliases_map=aliases_map,
                                                          joins=joins)
             # build the aliased attributes list
-            aliased_attrs: list[str] = PySob.__prefix_aliases(attrs=list(attrs),
-                                                              aliases=aliases_map)
+            aliased_attrs: list[str] = PySob.prepend_aliases(attrs=list(attrs))
             # normalize the 'ORDER BY' clause
             if orderby_clause:
-                orderby_clause = PySob.__normalize_orderby(orderby=orderby_clause,
-                                                           aliases=aliases_map)
+                orderby_clause = PySob.__normalize_orderby(orderby=orderby_clause)
             # retrieve the data
             sel_stmt: str = f"SELECT DISTINCT {', '.join(aliased_attrs)} FROM {from_clause}"
             recs: list[tuple] = db_select(sel_stmt=sel_stmt,
@@ -1061,8 +1054,7 @@ class PySob:
                 mapped_enums: list[type[IntEnum | StrEnum]] = []
                 for aliased_attr in aliased_attrs:
                     alias, attr = aliased_attr.split(sep=".")
-                    subcls_name: str = dict_get_key(source=aliases_map,
-                                                    value=alias)
+                    subcls_name: str = PySob.__from_alias(alias=alias)
                     if subcls_name:
                         cls_enums: dict[str, type[IntEnum | StrEnum]] = sob_attrs_enum.get(subcls_name, {})
                         cls_enum: type[IntEnum | StrEnum] = cls_enums.get(attr)
@@ -1163,21 +1155,16 @@ class PySob:
         cls: type[Sob] = PySob.__get_invoking_class(errors=errors)
 
         if cls:
-            # obtain the aliases map
-            aliases_map: dict[str, str] = PySob.__build_aliases_map(subcls=cls,
-                                                                    joins=joins)
             # build the FROM clause
             from_clause: str = PySob.__build_from_clause(subcls=cls,
-                                                         aliases_map=aliases_map,
                                                          joins=joins)
             # build the attributes list
             cls_name: str = f"{cls.__module__}.{cls.__qualname__}"
-            alias: str = aliases_map.get(cls_name)
+            alias: str = sob_db_specs[cls_name][1]
             attrs: list[str] = [f"{alias}.{attr}" for attr in sob_db_columns.get(cls_name)]
 
             # retrieve the data
-            where_data = PySob.__prefix_aliases(attrs=where_data,
-                                                aliases=aliases_map)
+            where_data = PySob.prepend_aliases(attrs=where_data)
             sel_stmt: str = f"SELECT {', '.join(attrs)} FROM {from_clause}"
             recs: list[tuple[int | str]] = db_select(sel_stmt=sel_stmt,
                                                      where_clause=where_clause,
@@ -1304,25 +1291,19 @@ class PySob:
         cls: type[Sob] = PySob.__get_invoking_class(errors=errors)
 
         if cls:
-            # obtain the aliases map
-            aliases_map: dict[str, str] = PySob.__build_aliases_map(subcls=cls,
-                                                                    joins=joins)
             # build the FROM clause
             from_clause: str = PySob.__build_from_clause(subcls=cls,
-                                                         aliases_map=aliases_map,
                                                          joins=joins)
             # build the attributes list
             cls_name: str = f"{cls.__module__}.{cls.__qualname__}"
-            alias: str = aliases_map.get(cls_name)
+            alias: str = sob_db_specs[cls_name][1]
             attrs: list[str] = [f"{alias}.{attr}" for attr in sob_db_columns.get(cls_name)]
 
             # normalize the 'ORDER BY' clause
             if orderby_clause:
-                orderby_clause = PySob.__normalize_orderby(orderby=orderby_clause,
-                                                           aliases=aliases_map)
+                orderby_clause = PySob.__normalize_orderby(orderby=orderby_clause)
             # retrieve the data
-            where_data = PySob.__prefix_aliases(attrs=where_data,
-                                                aliases=aliases_map)
+            where_data = PySob.prepend_aliases(attrs=where_data)
             sel_stmt: str = f"SELECT DISTINCT {', '.join(attrs)} FROM {from_clause}"
             recs: list[tuple[int | str]] = db_select(sel_stmt=sel_stmt,
                                                      where_clause=where_clause,
@@ -1490,61 +1471,11 @@ class PySob:
 
     # noinspection PyPep8
     @staticmethod
-    def add_aliases(attrs: list[str | StrEnum] |
-                           dict[str | StrEnum, Any] | None,
-                    classes: list[type[Sob]] = None,
-                    errors: list[str] = None) -> list[str] | dict[str, Any] | None:
-        """
-        Add the appropriate database aliases to the names of the database attributes in *attrs*.
-
-        An alias is obtained by concatenating the uppercase letters of the *Sob* subclass name and setting
-        it to lowercase. If a conflict arises, subsequent lowercase letters from the *Sob* subclass name
-        are added to the alias, until the alias becomes unique. If specified, *classes* will be considered first,
-        immediately after the invoking class itself.
-
-        :param attrs: the *list* or *dict* containing the database attributes
-        :param classes: optional list of pre-defined *Sob* subclasses
-        :param errors: incidental error messages (might be a non-empty list)
-        :return: the *list* or *dict* containing the aliased database attributes
-        """
-        # initialize the return variable
-        result: list[str] | dict[str, Any] | None = None
-
-        # obtain the invoking class
-        cls: type[Sob] = PySob.__get_invoking_class(errors=errors)
-
-        if cls:
-            # instantiate the aliases map
-            aliases: dict[str, str] = {}
-
-            # register the invoking class first
-            PySob.__register_class_alias(subcls=cls,
-                                         aliases_map=aliases)
-
-            # then the list of *Sob* subclasses
-            if classes:
-                for subcls in classes:
-                    PySob.__register_class_alias(subcls=subcls,
-                                                 aliases_map=aliases)
-            # then the attributes
-            for attr in attrs:
-                if isinstance(attr, StrEnum):
-                    subcls = attr.__class__
-                    PySob.__register_class_alias(subcls=subcls,
-                                                 aliases_map=aliases)
-            # add the aliases
-            result = PySob.__prefix_aliases(attrs=attrs,
-                                            aliases=aliases)
-        return result
-
-    # noinspection PyPep8
-    @staticmethod
     def build_from_clause(joins: list[tuple[type[Sob],
                                             list[tuple[StrEnum, StrEnum,
                                                        Literal["=", "<>", "<=", ">="] | None,
                                                        Literal["and", "or"] | None]],
                                             Literal["inner", "full", "left", "right"] | None]] | list[tuple],
-                          classes: list[type[Sob]] = None,
                           errors: list[str] = None) -> str:
         """
         Build the query's *FROM* clause.
@@ -1560,7 +1491,6 @@ class PySob:
             3. the third element is the type of the join ("inner", "full", "left", "right", defaults to "inner")
 
         :param joins: the list of *JOIN* clauses
-        :param classes: optional list of *Sob* subclasses to assist with alias determination
         :param errors: incidental error messages (might be a non-empty list)
         :return: the *FROM* clause containing the *JOIN*s
         """
@@ -1569,48 +1499,44 @@ class PySob:
 
         # obtain the invoking class
         cls: type[Sob] = PySob.__get_invoking_class(errors=errors)
-
         if cls:
-            # obtain the aliases map
-            aliases_map: dict[str, str] = PySob.__build_aliases_map(subcls=cls,
-                                                                    joins=joins,
-                                                                    classes=classes)
             # build the 'FROM' clause
             result = PySob.__build_from_clause(subcls=cls,
-                                               aliases_map=aliases_map,
                                                joins=joins)
         return result
 
     @staticmethod
-    def __prefix_alias(attr: str | StrEnum,
-                       aliases: dict[str, str]) -> str:
+    def prepend_alias(attr: str | StrEnum) -> str:
         """
-        Add the appropriate database alias to *attr*.
+        Prefix *attr* with the appropriate database alias.
+
+        A unique alias is obtained by concatenating the first letters of the underscore-delimited segments
+        of the nonschema qualified attribute's table name. Characters sequentially extracted from the name,
+        or a numeric index, may be postfixed to the alias, in order to make it unique.
 
         :param attr: the database attribute
-        :param aliases: mapping of *Sob* subclasses to aliases
         :return: the aliased attribute
         """
         if isinstance(attr, StrEnum):
-            # HAZARD: we need the fully-qualified name of the enum's host class
+            # obtain the fully-qualified name of the enum's host class
             cls_name: str = f"{attr.__class__.__module__}.{attr.__class__.__qualname__}".rsplit(".", 1)[0]
-            attr_alias: str = aliases.get(cls_name, "")
-            if attr_alias:
-                attr_alias = attr_alias + "."
-            result: str = attr_alias + attr.value.lower()
+            result: str = sob_db_specs[cls_name][1] + "." + attr.value
         else:
             result: str = attr
 
         return result
 
     @staticmethod
-    def __prefix_aliases(attrs: list[str | StrEnum] | dict[str | StrEnum, Any],
-                         aliases: dict[str, str]) -> list[str] | dict[str, Any]:
+    def prepend_aliases(attrs: list[str | StrEnum] | dict[str | StrEnum, Any]) -> list[str] | dict[str, Any]:
         """
-        Add the appropriate database aliases to the names of the database attributes in *attrs*.
+        Prefix the attributes in *attrs* with the appropriate database aliases.
+
+        Unique aliases are obtained by concatenating the first letters of the underscore-delimited segments
+        of non-schema qualified table names. The tables are the ones associated with the *Sob* subclasses
+        containing the attributes. Characters sequentially extracted from the name, or a numeric index,
+        may be postfixed to the aliases, in order to make them unique.
 
         :param attrs: the *list* or *dict* containing the database attributes
-        :param aliases: mapping of *Sob* subclasses to aliases
         :return: the *list* or *dict* containing the aliased database attributes
         """
         # initialize the return variable
@@ -1619,8 +1545,7 @@ class PySob:
         if isinstance(attrs, list):
             result: list[str] = []
             for attr in attrs:
-                aliased_attr: str = PySob.__prefix_alias(attr=attr,
-                                                         aliases=aliases)
+                aliased_attr: str = PySob.prepend_alias(attr=attr)
                 result.append(aliased_attr)
         elif isinstance(attrs, dict):
             result: dict[str, str] = {}
@@ -1628,68 +1553,20 @@ class PySob:
                 if isinstance(attr, list | tuple):
                     # handle 'where_data' with complex structure
                     # (see full documentation in module 'pypomes-db')
-                    aliased_attr: str = PySob.__prefix_alias(attr=attr[0],
-                                                             aliases=aliases)
+                    aliased_attr: str = PySob.prepend_alias(attr=attr[0])
                     if isinstance(attr, list):
                         result[[aliased_attr, *attr[1:]]] = val
                     else:
                         result[(aliased_attr, *attr[1:])] = val
                 else:
-                    aliased_attr: str = PySob.__prefix_alias(attr=attr,
-                                                             aliases=aliases)
+                    aliased_attr: str = PySob.prepend_alias(attr=attr)
                     result[aliased_attr] = val
 
         return result
 
     # noinspection PyPep8
     @staticmethod
-    def __build_aliases_map(subcls: type[Sob],
-                            joins: list[tuple[type[Sob],
-                                              list[tuple[StrEnum, StrEnum,
-                                                         Literal["=", "<>", "<=", ">="] | None,
-                                                         Literal["and", "or"] | None]],
-                                              Literal["inner", "full", "left", "right"] | None]] | list[tuple],
-                            classes: list[type[Sob]] = None) -> dict[str, str]:
-        """
-        Map the *Sob* subclasses to database aliases.
-
-        The parameter *joins* holds a list of tuples specifying the table joins, with the following format:
-            1. the first element in the tuple identifies the table:
-                - a singlet, with the type of the *Sob* subclass whose database table is to be joined
-            2. a 2/3/4-tuple, or a list of 2/3/4-tuples, informs on the *ON* fragment conditions:
-                - the first attribute, as a string or a *StrEnum* instance
-                - the second attribute, as a string or a *StrEnum* instance
-                - the operation ("=", "<>", "<=", or ">=", defaults to "=")
-                - the connector to the next condition ("and" or "or", defaults to "and")
-            3. the third element is the type of the join ("inner", "full", "left", "right", defaults to "inner")
-
-        :param subcls: the reference *Sob* subclass
-        :param joins: the list of *JOIN* clauses
-        :param classes: optional list of *Sob* subclasses to assist with alias determination
-        :return: the mapping of aliases to *Sob* subclasses
-        """
-        # initialize the return variable
-        result: dict[str, str] = {}
-
-        # register the alias for the master subclass
-        PySob.__register_class_alias(subcls=subcls,
-                                     aliases_map=result)
-        # register the subclasses
-        for cls in classes or []:
-            PySob.__register_class_alias(subcls=cls,
-                                         aliases_map=result)
-
-        # traverse the joins (only the first element in each tuple is relevant)
-        for join in joins or []:
-            join_cls: type[Sob] = join[0]
-            PySob.__register_class_alias(subcls=join_cls,
-                                         aliases_map=result)
-        return result
-
-    # noinspection PyPep8
-    @staticmethod
     def __build_from_clause(subcls: type[Sob],
-                            aliases_map: dict[str, str],
                             joins: list[tuple[type[Sob],
                                               list[tuple[StrEnum, StrEnum,
                                                          Literal["=", "<>", "<=", ">="] | None,
@@ -1710,7 +1587,6 @@ class PySob:
             3. the third element is the type of the join ("inner", "full", "left", "right", defaults to "inner")
 
         :param subcls: the reference *Sob* subclass
-        :param aliases_map: mapping of *Sob* subclasses to aliases
         :param joins: the list of *JOIN* clauses
         :return: the *FROM* clause containing the *JOIN*s
         """
@@ -1718,13 +1594,13 @@ class PySob:
         cls_name: str = f"{subcls.__module__}.{subcls.__qualname__}"
 
         # initialize the return variable
-        result: str = sob_db_specs[cls_name][0] + " AS " + aliases_map.get(cls_name)
+        result: str = sob_db_specs[cls_name][0] + " AS " + sob_db_specs[cls_name][1]
 
         # traverse the joins
         for join in joins or []:
             join_cls: str = f"{join[0].__module__}.{join[0].__qualname__}"
             table_name: str = sob_db_specs[join_cls][0]
-            join_alias: str = aliases_map.get(join_cls)
+            join_alias: str = sob_db_specs[join_cls][1]
             join_mode: str = join[3].upper() if len(join) > 3 else "INNER"
             result += f" {join_mode} JOIN {table_name} AS {join_alias} ON "
 
@@ -1732,10 +1608,8 @@ class PySob:
             on_specs: list[tuple] = join[1] if isinstance(join[1], list) else [join[1]]
             for on_spec in on_specs:
                 op: str = on_spec[2] if len(on_spec) > 2 and on_spec[2] in ["=", "<>", "<=", ">="] else "="
-                result += (PySob.__prefix_alias(attr=on_spec[0],
-                                                aliases=aliases_map) + " " + op + " " +
-                           PySob.__prefix_alias(attr=on_spec[1],
-                                                aliases=aliases_map))
+                result += (PySob.prepend_alias(attr=on_spec[0]) + " " + op + " " +
+                           PySob.prepend_alias(attr=on_spec[1]))
                 con: str = on_spec[-1].upper() if  len(on_spec) > 2 and on_spec[-1] in ["and", "or"] else "AND"
                 result += " " + con + " "
             result = result[:-5] if result.endswith(" AND ") else result[:-4]
@@ -1746,8 +1620,7 @@ class PySob:
     @staticmethod
     def __normalize_orderby(orderby: StrEnum |
                                      tuple[StrEnum, Literal["asc", "desc"] | None] |
-                                     list[StrEnum | tuple[StrEnum, Literal["asc", "desc"] | None]],
-                            aliases: dict[str, str]) -> str:
+                                     list[StrEnum | tuple[StrEnum, Literal["asc", "desc"] | None]]) -> str:
         """
         Normalize the *ORDER BY* query clause, by adding aliases and converting to a *str*.
 
@@ -1775,8 +1648,7 @@ class PySob:
             else:
                 attr = item
                 sort_dir = "ASC"
-            result += PySob.__prefix_alias(attr=attr,
-                                           aliases=aliases) + " " + sort_dir + ", "
+            result += PySob.prepend_alias(attr=attr) + " " + sort_dir + ", "
 
         return result[:-2]
 
@@ -1833,7 +1705,6 @@ class PySob:
                 if logger:
                     logger.warning(msg=exc_format(exc=e,
                                                   exc_info=sys.exc_info()))
-
         if not result:
             msg: str = (f"Unable to obtain class '{classname}', "
                         f"filepath '{filepath}', from invoking function '{invoking_function}'")
@@ -1843,40 +1714,6 @@ class PySob:
                 errors.append(msg)
 
         return result
-
-    @staticmethod
-    def __register_class_alias(subcls: type[Sob],
-                               aliases_map: dict[str, str]) -> None:
-        """
-        Register the alias for the *Sob* subclass *subcls*.
-
-        An alias is obtained by concatenating the uppercase letters of the *Sob* subclass name and setting
-        it to lowercase. If a conflict arises, subsequent lowercase letters from the *Sob* subclass name
-        are added to the alias, until the alias becomes unique.
-
-        :param subcls: the reference *Sob* subclass
-        :param aliases_map: the aliases registry
-        """
-        subcls_name: str = f"{subcls.__module__}.{subcls.__qualname__}"
-        if subcls_name not in aliases_map:
-            # obtain an alias for 'subcls'
-            simple_name: str = subcls_name.rsplit(".")[-1]
-            cls_alias: str = "".join([c for c in simple_name if c.isupper()]).lower()
-            if cls_alias:
-                pos: int = 0
-                while dict_has_value(source=aliases_map,
-                                     value=cls_alias):
-                    remainder: str = simple_name[pos:]
-                    for c in remainder:
-                        pos += 1
-                        if c.islower():
-                            cls_alias += c
-                            break
-            else:
-                cls_alias = simple_name
-
-            # register the alias
-            aliases_map[subcls_name] = cls_alias
 
     @staticmethod
     def __load_references(__references:  type[Sob | list[Sob]] | list[type[Sob | list[Sob]]],
@@ -1943,6 +1780,66 @@ class PySob:
             result = None
             if isinstance(errors, list):
                 errors.extend(curr_errors)
+
+        return result
+
+    @staticmethod
+    def __make_alias(tbl_name: str) -> str:
+        """
+        Create a unique alias for database table *tbl_name*.
+
+        A unique alias is obtained by concatenating the first letters of the underscore-delimited segments
+        of nonschema qualified name in *tbl_name*. For names not containing underscores, characters sequentially
+        extracted from the name, or otherwise a numeric index, may be postfixed to the alias, in order to make
+        it unique.
+
+        :param tbl_name: the reference databse table name
+        :return: a unique alias for *tbl_name*
+        """
+        # initialize the return variable
+        result: str = ""
+        # build a list with the current aliases
+        aliases: list[str] = [specs[1] for specs in sob_db_specs.values()]
+
+        # remove schema qualification
+        tbl_name = tbl_name[tbl_name.find(".")+1:]
+
+        # obtain an alias for 'tbl_name'
+        segs: list[str] = tbl_name.split(sep="_")
+        for seg in segs:
+            if seg:
+                result += seg[0].lower()
+
+        # prevent duplicate aliases
+        pos1: int = 0
+        pos2: int = 0
+        alias: str = result
+        while result in aliases:
+            pos1 += 1
+            if "_" in tbl_name or pos1 > len(tbl_name):
+                pos2 += 1
+                result = alias + str(pos2)
+            else:
+                result += tbl_name[pos1].lower()
+
+        return result
+
+    @staticmethod
+    def __from_alias(alias: str) -> str:
+        """
+        Retrieve the fully-qualified name of the *Sob* subclass whose database table name is mapped to *alias*.
+
+        :param alias: the reference alias
+        :return: the fully-qualified name of the *Sob* subclass mapped to *alias*, or *None* if not found
+        """
+        # initialize the return variable
+        result: str | None = None
+
+        # traverse the DB specs
+        for subcls, specs in sob_db_specs:
+            if specs[1] == alias:
+                result = subcls
+                break
 
         return result
 
