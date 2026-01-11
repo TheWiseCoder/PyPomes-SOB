@@ -370,6 +370,7 @@ class PySob:
         cls_name: str = f"{self.__class__.__module__}.{self.__class__.__qualname__}"
         mapping: list[tuple[str | StrEnum, str]] = sob_attrs_input.get(cls_name)
         if mapping:
+            result = {}
             for input_, attr in mapping:
                 if attr:
                     val: Any = self.__dict__.get(attr)
@@ -670,8 +671,8 @@ class PySob:
             - the type of the primary key (*int* or *str*)
             - if the primary key's type is *int*, whether it is an identity column (defaults to *True*)
 
-        The optional parameter *attrs_enum* lists the *IntEnum* and *StrEnum* instances to which attributes of the
-        class instances are mapped. This is used to instantiate the appropriate *enums* as values for the attributes
+        The parameter *attrs_enum* lists the *IntEnum* and *StrEnum* instances to which attributes of the class
+        instances are mapped. This is used to instantiate the appropriate *enums* as values for the attributes
         when loading data from the database.
 
         The optional parameter *attrs_unique* is a list of tuples, each one containing a set of one or more
@@ -747,15 +748,15 @@ class PySob:
 
     @staticmethod
     def count(joins: list[tuple[type[Sob],
-                                list[tuple[StrEnum, StrEnum,
+                                list[tuple[str | StrEnum, str | StrEnum,
                                            Literal["=", "<>", "<=", ">="] | None,
                                            Literal["and", "or"] | None]],
                                 Literal["inner", "full", "left", "right"] | None]] | list[tuple] = None,
               count_clause: str = None,
               where_clause: str = None,
               where_vals: tuple = None,
-              where_data: dict[StrEnum | tuple |
-                               tuple[StrEnum,
+              where_data: dict[str | StrEnum | tuple |
+                               tuple[str | StrEnum,
                                      Literal["=", ">", "<", ">=", "<=",
                                              "<>", "in", "like", "between"] | None,
                                      Literal["and", "or"] | None], Any] = None,
@@ -776,12 +777,12 @@ class PySob:
                 - the connector to the next condition ("and" or "or", defaults to "and")
             3. the third element is the type of the join ("inner", "full", "left", "right", defaults to "inner")
 
-        Optionally, selection criteria may be specified in *where_clause* and *where_vals*, or additionally but
-        preferably, by key-value pairs in *where_data*. Care should be exercised if *where_clause* contains *IN*
-        directives. In PostgreSQL, the list of values for an attribute with the *IN* directive must be contained
-        in a specific tuple, and the operation will break for a list of values containing only 1 element.
-        The safe way to specify *IN* directives is to add them to *where_data*, as the specifics of each DB flavor
-        will then be properly dealt with.
+        Selection criteria may be specified in *where_clause* and *where_vals*, or additionally but preferably,
+        by key-value pairs in *where_data*. Care should be exercised if *where_clause* contains *IN* directives.
+        In PostgreSQL, the list of values for an attribute with the *IN* directive must be contained in a
+        specific tuple, and the operation will break for a list of values containing only 1 element.
+        The safe way to specify *IN* directives is to add them to *where_data*, as the specifics of each
+        DB flavor will then be properly dealt with.
 
         The syntax specific to *where_data*'s key/value pairs is as follows:
             1. *key*:
@@ -821,8 +822,11 @@ class PySob:
             # build the FROM clause
             from_clause: str = PySob.__build_from_clause(subcls=cls,
                                                          joins=joins)
+            # normalize the data for the WHERE clause
+            if where_data:
+                where_data = PySob.prepend_aliases(attrs=where_data)
+
             # retrieve the data
-            where_data = PySob.prepend_aliases(attrs=where_data)
             result = db_count(table=from_clause,
                               count_clause=count_clause,
                               where_clause=where_clause,
@@ -836,14 +840,14 @@ class PySob:
 
     @staticmethod
     def exists(joins: list[tuple[type[Sob],
-                                 list[tuple[StrEnum, StrEnum,
+                                 list[tuple[str | StrEnum, str | StrEnum,
                                             Literal["=", "<>", "<=", ">="] | None,
                                             Literal["and", "or"] | None]],
                                  Literal["inner", "full", "left", "right"] | None]] | list[tuple] = None,
                where_clause: str = None,
                where_vals: tuple = None,
-               where_data: dict[StrEnum | tuple |
-                                tuple[StrEnum,
+               where_data: dict[str | StrEnum | tuple |
+                                tuple[str | StrEnum,
                                       Literal["=", ">", "<", ">=", "<=",
                                               "<>", "in", "like", "between"] | None,
                                       Literal["and", "or"] | None], Any] = None,
@@ -866,12 +870,12 @@ class PySob:
                 - the connector to the next condition ("and" or "or", defaults to "and")
             3. the third element is the type of the join ("inner", "full", "left", "right", defaults to "inner")
 
-        Optionally, selection criteria may be specified in *where_clause* and *where_vals*, or additionally but
-        preferably, by key-value pairs in *where_data*. Care should be exercised if *where_clause* contains *IN*
-        directives. In PostgreSQL, the list of values for an attribute with the *IN* directive must be contained
-        in a specific tuple, and the operation will break for a list of values containing only 1 element.
-        The safe way to specify *IN* directives is to add them to *where_data*, as the specifics of each DB flavor
-        will then be properly dealt with.
+        Selection criteria may be specified in *where_clause* and *where_vals*, or additionally but preferably,
+        by key-value pairs in *where_data*. Care should be exercised if *where_clause* contains *IN* directives.
+        In PostgreSQL, the list of values for an attribute with the *IN* directive must be contained in a
+        specific tuple, and the operation will break for a list of values containing only 1 element.
+        The safe way to specify *IN* directives is to add them to *where_data*, as the specifics of each
+        DB flavor will then be properly dealt with.
 
         The syntax specific to *where_data*'s key/value pairs is as follows:
             1. *key*:
@@ -912,8 +916,11 @@ class PySob:
             # build the FROM clause
             from_clause: str = PySob.__build_from_clause(subcls=cls,
                                                          joins=joins)
+            # normalize the data for the WHERE clause
+            if where_data:
+                where_data = PySob.prepend_aliases(attrs=where_data)
+
             # execute the query
-            where_data = PySob.prepend_aliases(attrs=where_data)
             result = db_exists(table=from_clause,
                                where_clause=where_clause,
                                where_vals=where_vals,
@@ -928,22 +935,22 @@ class PySob:
 
     # noinspection PyPep8
     @staticmethod
-    def get_values(attrs: tuple[str],
+    def get_values(attrs: tuple[str | StrEnum, ...],
                    joins: list[tuple[type[Sob],
-                                     list[tuple[StrEnum, StrEnum,
+                                     list[tuple[str | StrEnum, str | StrEnum,
                                                 Literal["=", "<>", "<=", ">="] | None,
                                                 Literal["and", "or"] | None]],
                                      Literal["inner", "full", "left", "right"] | None]] | list[tuple] = None,
                    where_clause: str = None,
                    where_vals: tuple = None,
-                   where_data: dict[StrEnum | tuple |
-                                    tuple[StrEnum,
+                   where_data: dict[str | StrEnum | tuple |
+                                    tuple[str | StrEnum,
                                           Literal["=", ">", "<", ">=", "<=",
                                                   "<>", "in", "like", "between"] | None,
                                           Literal["and", "or"] | None], Any] = None,
-                   orderby_clause: StrEnum |
-                                   tuple[StrEnum, Literal["asc", "desc"] | None] |
-                                   list[StrEnum | tuple[StrEnum, Literal["asc", "desc"] | None]] = None,
+                   orderby_clause: str | StrEnum |
+                                   tuple[str | StrEnum, Literal["asc", "desc"] | None] |
+                                   list[str | StrEnum | tuple[StrEnum, Literal["asc", "desc"] | None]] = None,
                    min_count: int = None,
                    max_count: int = None,
                    offset_count: int = None,
@@ -954,6 +961,11 @@ class PySob:
                    errors: list[str] = None) -> list[tuple] | None:
         """
         Retrieve the values of *attrs* from the database, as per the criteria provided.
+
+        When building the database query, attributes in *attrs* specified as instances of *StrEnum* mapped
+        to database tables will have the proper aliases automatically prepended. For an attribute specified
+        as a un-aliased plain string, the alias corresponding to the database table associated with the
+        invoking class will be used for that purpose, if a column with the same name exists therein.
 
         Optionally, *joins* holds a list of tuples specifying the table joins, with the following format:
             1. the first element in the tuple identifies the table:
@@ -969,8 +981,8 @@ class PySob:
         by key-value pairs in *where_data*. Care should be exercised if *where_clause* contains *IN* directives.
         In PostgreSQL, the list of values for an attribute with the *IN* directive must be contained in a
         specific tuple, and the operation will break for a list of values containing only 1 element.
-        The safe way to specify *IN* directives is to add them to *where_data*, as the specifics of each DB flavor
-        will then be properly dealt with.
+        The safe way to specify *IN* directives is to add them to *where_data*, as the specifics of each
+        DB flavor will then be properly dealt with.
 
         The syntax specific to *where_data*'s key/value pairs is as follows:
             1. *key*:
@@ -1025,14 +1037,28 @@ class PySob:
         cls: type[Sob] = PySob.__get_invoking_class(errors=errors)
 
         if cls:
+            cls_name: str = f"{cls.__module__}.{cls.__qualname__}"
+
             # build the FROM clause
             from_clause: str = PySob.__build_from_clause(subcls=cls,
                                                          joins=joins)
             # build the aliased attributes list
             aliased_attrs: list[str] = PySob.prepend_aliases(attrs=list(attrs))
+            alias: str = sob_db_specs[cls_name][1]
+            columns: tuple[str] = sob_db_columns.get(cls_name)
+            # prepend aliases to plain, un-aliased, attributes
+            for idx, aliased_attr in enumerate(aliased_attrs.copy()):
+                if "." not in aliased_attr and aliased_attr in columns:
+                    aliased_attrs[idx] = alias + "." + aliased_attr
+
+            # normalize the data for the WHERE clause
+            if where_data:
+                where_data = PySob.prepend_aliases(attrs=where_data)
+
             # normalize the 'ORDER BY' clause
             if orderby_clause:
                 orderby_clause = PySob.__normalize_orderby(orderby=orderby_clause)
+
             # retrieve the data
             sel_stmt: str = f"SELECT DISTINCT {', '.join(aliased_attrs)} FROM {from_clause}"
             recs: list[tuple] = db_select(sel_stmt=sel_stmt,
@@ -1050,25 +1076,24 @@ class PySob:
                                           errors=errors)
             if recs:
                 # build the list of enums mapped to the attributes
-                has_mapping: bool = False
-                mapped_enums: list[type[IntEnum | StrEnum]] = []
+                mapped_enums: dict[str, type[IntEnum | StrEnum]] = {}
                 for aliased_attr in aliased_attrs:
-                    alias, attr = aliased_attr.split(sep=".")
-                    subcls_name: str = PySob.__from_alias(alias=alias)
-                    if subcls_name:
-                        cls_enums: dict[str, type[IntEnum | StrEnum]] = sob_attrs_enum.get(subcls_name, {})
-                        cls_enum: type[IntEnum | StrEnum] = cls_enums.get(attr)
-                        mapped_enums.append(cls_enum)
-                        # noinspection PyUnreachableCode
-                        if cls_enum:
-                            has_mapping = True
-                if has_mapping:
+                    if "." in aliased_attr:
+                        alias, attr = aliased_attr.split(sep=".")
+                        subcls_name: str = PySob.__from_alias(alias=alias)
+                        if subcls_name:
+                            cls_enums: dict[str, type[IntEnum | StrEnum]] = sob_attrs_enum.get(subcls_name, {})
+                            cls_enum: type[IntEnum | StrEnum] = cls_enums.get(attr)
+                            # noinspection PyUnreachableCode
+                            if cls_enum:
+                                mapped_enums[aliased_attr] = cls_enum
+                if mapped_enums:
                     # replace values with corresponding enums
                     result = []
                     for rec in recs:
                         rec_list: list = []
                         for idx, val in enumerate(iterable=rec):
-                            mapped_enum: type[IntEnum | StrEnum] = mapped_enums[idx]
+                            mapped_enum: type[IntEnum | StrEnum] = mapped_enums.get(aliased_attrs[idx])
                             rec_list.append(PySob.__to_enum(attr_value=val,
                                                             cls_enum=mapped_enum))
                         result.append(tuple(rec_list))
@@ -1082,14 +1107,14 @@ class PySob:
     def get_single(__references: type[Sob | list[Sob]] | list[type[Sob | list[Sob]]] = None,
                    /,
                    joins: list[tuple[type[Sob],
-                                     list[tuple[StrEnum, StrEnum,
+                                     list[tuple[str | StrEnum, str | StrEnum,
                                                 Literal["=", "<>", "<=", ">="] | None,
                                                 Literal["and", "or"] | None]],
                                      Literal["inner", "full", "left", "right"] | None]] | list[tuple] = None,
                    where_clause: str = None,
                    where_vals: tuple = None,
-                   where_data: dict[StrEnum | tuple |
-                                    tuple[StrEnum,
+                   where_data: dict[str | StrEnum | tuple |
+                                    tuple[str | StrEnum,
                                           Literal["=", ">", "<", ">=", "<=",
                                                   "<>", "in", "like", "between"] | None,
                                           Literal["and", "or"] | None], Any] = None,
@@ -1110,12 +1135,12 @@ class PySob:
                 - the connector to the next condition ("and" or "or", defaults to "and")
             3. the third element is the type of the join ("inner", "full", "left", "right", defaults to "inner")
 
-        Optionally, selection criteria may be specified in *where_clause* and *where_vals*, or additionally but
-        preferably, by key-value pairs in *where_data*. Care should be exercised if *where_clause* contains *IN*
-        directives. In PostgreSQL, the list of values for an attribute with the *IN* directive must be contained
-        in a specific tuple, and the operation will break for a list of values containing only 1 element.
-        The safe way to specify *IN* directives is to add them to *where_data*, as the specifics of each DB flavor
-        will then be properly dealt with.
+        Selection criteria may be specified in *where_clause* and *where_vals*, or additionally but preferably,
+        by key-value pairs in *where_data*. Care should be exercised if *where_clause* contains *IN* directives.
+        In PostgreSQL, the list of values for an attribute with the *IN* directive must be contained in a
+        specific tuple, and the operation will break for a list of values containing only 1 element.
+        The safe way to specify *IN* directives is to add them to *where_data*, as the specifics of each
+        DB flavor will then be properly dealt with.
 
         The syntax specific to *where_data*'s key/value pairs is as follows:
             1. *key*:
@@ -1163,8 +1188,11 @@ class PySob:
             alias: str = sob_db_specs[cls_name][1]
             attrs: list[str] = [f"{alias}.{attr}" for attr in sob_db_columns.get(cls_name)]
 
+            # normalize the data for the WHERE clause
+            if where_data:
+                where_data = PySob.prepend_aliases(attrs=where_data)
+
             # retrieve the data
-            where_data = PySob.prepend_aliases(attrs=where_data)
             sel_stmt: str = f"SELECT {', '.join(attrs)} FROM {from_clause}"
             recs: list[tuple[int | str]] = db_select(sel_stmt=sel_stmt,
                                                      where_clause=where_clause,
@@ -1199,20 +1227,20 @@ class PySob:
     def retrieve(__references: type[Sob | list[Sob]] | list[type[Sob | list[Sob]]] = None,
                  /,
                  joins: list[tuple[type[Sob],
-                                   list[tuple[StrEnum, StrEnum,
+                                   list[tuple[str | StrEnum, str | StrEnum,
                                               Literal["=", "<>", "<=", ">="] | None,
                                               Literal["and", "or"] | None]],
                                    Literal["inner", "full", "left", "right"] | None]] | list[tuple] = None,
                  where_clause: str = None,
                  where_vals: tuple = None,
-                 where_data: dict[StrEnum | tuple |
-                                  tuple[StrEnum,
+                 where_data: dict[str | StrEnum | tuple |
+                                  tuple[str | StrEnum,
                                         Literal["=", ">", "<", ">=", "<=",
                                                 "<>", "in", "like", "between"] | None,
                                         Literal["and", "or"] | None], Any] = None,
-                 orderby_clause: StrEnum |
-                                 tuple[StrEnum, Literal["asc", "desc"] | None] |
-                                 list[StrEnum | tuple[StrEnum, Literal["asc", "desc"] | None]] = None,
+                 orderby_clause: str | StrEnum |
+                                 tuple[str | StrEnum, Literal["asc", "desc"] | None] |
+                                 list[str | StrEnum | tuple[StrEnum, Literal["asc", "desc"] | None]] = None,
                  min_count: int = None,
                  max_count: int = None,
                  offset_count: int = None,
@@ -1238,8 +1266,8 @@ class PySob:
         by key-value pairs in *where_data*. Care should be exercised if *where_clause* contains *IN* directives.
         In PostgreSQL, the list of values for an attribute with the *IN* directive must be contained in a
         specific tuple, and the operation will break for a list of values containing only 1 element.
-        The safe way to specify *IN* directives is to add them to *where_data*, as the specifics of each DB
-        flavor will then be properly dealt with.
+        The safe way to specify *IN* directives is to add them to *where_data*, as the specifics of
+        each DB flavor will then be properly dealt with.
 
         The syntax specific to *where_data*'s key/value pairs is as follows:
             1. *key*:
@@ -1299,11 +1327,15 @@ class PySob:
             alias: str = sob_db_specs[cls_name][1]
             attrs: list[str] = [f"{alias}.{attr}" for attr in sob_db_columns.get(cls_name)]
 
+            # normalize the data for the WHERE clause
+            if where_data:
+                where_data = PySob.prepend_aliases(attrs=where_data)
+
             # normalize the 'ORDER BY' clause
             if orderby_clause:
                 orderby_clause = PySob.__normalize_orderby(orderby=orderby_clause)
+
             # retrieve the data
-            where_data = PySob.prepend_aliases(attrs=where_data)
             sel_stmt: str = f"SELECT DISTINCT {', '.join(attrs)} FROM {from_clause}"
             recs: list[tuple[int | str]] = db_select(sel_stmt=sel_stmt,
                                                      where_clause=where_clause,
@@ -1342,8 +1374,8 @@ class PySob:
     @staticmethod
     def erase(where_clause: str = None,
               where_vals: tuple = None,
-              where_data: dict[StrEnum | tuple |
-                               tuple[StrEnum,
+              where_data: dict[str | StrEnum | tuple |
+                               tuple[str | StrEnum,
                                      Literal["=", ">", "<", ">=", "<=",
                                              "<>", "in", "like", "between"] | None,
                                      Literal["and", "or"] | None], Any] = None,
@@ -1356,12 +1388,12 @@ class PySob:
         """
         Erase touples from the corresponding database table, as per the criteria provided.
 
-        Optionally, selection criteria may be specified in *where_clause* and *where_vals*, or additionally but
-        preferably, by key-value pairs in *where_data*. Care should be exercised if *where_clause* contains *IN*
-        directives. In PostgreSQL, the list of values for an attribute with the *IN* directive must be contained
-        in a specific tuple, and the operation will break for a list of values containing only 1 element.
-        The safe way to specify *IN* directives is to add them to *where_data*, as the specifics of each DB flavor
-        will then be properly dealt with.
+        Selection criteria may be specified in *where_clause* and *where_vals*, or additionally but preferably,
+        by key-value pairs in *where_data*. Care should be exercised if *where_clause* contains *IN* directives.
+        In PostgreSQL, the list of values for an attribute with the *IN* directive must be contained in a
+        specific tuple, and the operation will break for a list of values containing only 1 element.
+        The safe way to specify *IN* directives is to add them to *where_data*, as the specifics of each
+        DB flavor will then be properly dealt with.
 
         The syntax specific to *where_data*'s key/value pairs is as follows:
             1. *key*:
@@ -1404,9 +1436,14 @@ class PySob:
         if cls:
             cls_name: str = f"{cls.__module__}.{cls.__qualname__}"
             tbl_name: str = sob_db_specs[cls_name][0]
+            alias: str = sob_db_specs[cls_name][1]
+
+            # normalize the data for the 'WHERE" clause
+            if where_data:
+                where_data = PySob.prepend_aliases(attrs=where_data)
 
             # delete specified rows
-            result = db_delete(delete_stmt=f"DELETE FROM {tbl_name}",
+            result = db_delete(delete_stmt=f"DELETE {alias} FROM {tbl_name} AS {alias}",
                                where_clause=where_clause,
                                where_vals=where_vals,
                                where_data=where_data,
@@ -1472,7 +1509,7 @@ class PySob:
     # noinspection PyPep8
     @staticmethod
     def build_from_clause(joins: list[tuple[type[Sob],
-                                            list[tuple[StrEnum, StrEnum,
+                                            list[tuple[str | StrEnum, str | StrEnum,
                                                        Literal["=", "<>", "<=", ">="] | None,
                                                        Literal["and", "or"] | None]],
                                             Literal["inner", "full", "left", "right"] | None]] | list[tuple],
@@ -1503,6 +1540,24 @@ class PySob:
             # build the 'FROM' clause
             result = PySob.__build_from_clause(subcls=cls,
                                                joins=joins)
+        return result
+
+    @staticmethod
+    def get_alias(errors: list[str] = None) -> str:
+        """
+        Retrieve the alias for the database table associated with the invoking class.
+
+        :return: the alias for the database table associated with the invoking class
+        """
+        # initialize the return variable
+        result: str | None = None
+
+        # obtain the invoking class
+        cls: type[Sob] = PySob.__get_invoking_class(errors=errors)
+        if cls:
+            cls_name: str = f"{cls.__module__}.{cls.__qualname__}"
+            result = sob_db_specs[cls_name][1]
+
         return result
 
     @staticmethod
@@ -1568,7 +1623,7 @@ class PySob:
     @staticmethod
     def __build_from_clause(subcls: type[Sob],
                             joins: list[tuple[type[Sob],
-                                              list[tuple[StrEnum, StrEnum,
+                                              list[tuple[str | StrEnum, str | StrEnum,
                                                          Literal["=", "<>", "<=", ">="] | None,
                                                          Literal["and", "or"] | None]],
                                               Literal["inner", "full", "left", "right"] | None]] |
@@ -1618,7 +1673,7 @@ class PySob:
 
     # noinspection PyPep8
     @staticmethod
-    def __normalize_orderby(orderby: StrEnum |
+    def __normalize_orderby(orderby: str | StrEnum |
                                      tuple[StrEnum, Literal["asc", "desc"] | None] |
                                      list[StrEnum | tuple[StrEnum, Literal["asc", "desc"] | None]]) -> str:
         """
@@ -1677,6 +1732,8 @@ class PySob:
         pos_to: int = context.find(mark)
         pos_from: int = context.rfind(" ", 0, pos_to) + 1
         classname: str = context[pos_from:pos_to]
+        while not classname[0].isalpha():
+            classname = classname[1:]
         filepath: Path = Path(caller_frame.filename)
         mark = "." + classname
 
@@ -1836,7 +1893,7 @@ class PySob:
         result: str | None = None
 
         # traverse the DB specs
-        for subcls, specs in sob_db_specs:
+        for subcls, specs in sob_db_specs.items():
             if specs[1] == alias:
                 result = subcls
                 break
