@@ -1,11 +1,8 @@
 from enum import IntEnum, StrEnum
 from logging import Logger
-from pypomes_core import APP_PREFIX, StrEnumUseName, env_get_int, env_get_str
+from pypomes_core import APP_PREFIX, env_get_int
 from typing import Final
 
-# base folder name for all 'PySob' subclasses files (must be a part of a Posix-compliant path)
-SOB_BASE_FOLDER: Final[str] = env_get_str(key=f"{APP_PREFIX}_SOB_BASE_FOLDER",
-                                          def_value="entities")
 # maximum number of threads to use
 SOB_MAX_THREADS: Final[int] = env_get_int(key=f"{APP_PREFIX}_SOB_MAX_THREADS",
                                           def_value=1)
@@ -26,7 +23,7 @@ sob_db_columns: dict[str, tuple[str, ...]] = {}
 sob_db_specs: dict[str, tuple[str, str, type, bool]] = {}
 
 # holds mapping of enums to instance attributes
-sob_attrs_enum: dict[str, dict[str, type[IntEnum | StrEnum | StrEnumUseName]]] = {}
+sob_attrs_enum: dict[str, dict[str, type[IntEnum | StrEnum]]] = {}
 
 # holds sets of instance attributes unique in DB
 sob_attrs_unique: dict[str, list[tuple[str, ...]]] = {}

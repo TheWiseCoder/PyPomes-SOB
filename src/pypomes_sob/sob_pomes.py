@@ -1,24 +1,18 @@
 from __future__ import annotations  # allow forward references
-import sys
 from concurrent import futures
 from concurrent.futures import Future, ThreadPoolExecutor
 from enum import Enum, IntEnum, StrEnum
-from importlib import import_module
-from inspect import FrameInfo, stack
 from logging import Logger
-from pathlib import Path
-from pypomes_core import (
-    StrEnumUseName, dict_stringify, exc_format
-)
+from pypomes_core import dict_stringify
 from pypomes_db import (
-    DbEngine, db_exists, db_count,
-    db_select, db_insert, db_update, db_delete
+    DbEngine, db_get_default_engine,
+    db_exists, db_count, db_select,
+    db_insert, db_update, db_delete
 )
-from types import ModuleType
 from typing import Any, Literal, TypeVar
 
 from .sob_config import (
-    SOB_BASE_FOLDER, SOB_MAX_THREADS,
+    SOB_MAX_THREADS,
     sob_db_columns, sob_db_specs, sob_attrs_enum,
     sob_attrs_input, sob_attrs_unique, sob_loggers
 )
@@ -106,11 +100,13 @@ class PySob:
         :param errors: incidental error messages (might be a non-empty list)
         :return: *True* if the operation was successful, or *False* otherwise
         """
+        # obtain the fully-qualified name of the current Sob subclass
+        cls_name: str = f"{self.__class__.__module__}.{self.__class__.__qualname__}"
+
         # prepare data for INSERT
         return_col: dict[str, type] | None = None
         insert_data: dict[str, Any] = self.get(omit_nulls=True,
                                                keep_enums=False)
-        cls_name: str = f"{self.__class__.__module__}.{self.__class__.__qualname__}"
         is_identity: bool = sob_db_specs[cls_name][3]
         if is_identity:
             # PK is an identity column
@@ -160,8 +156,10 @@ class PySob:
         :param errors: incidental error messages (might be a non-empty list)
         :return: *True* if the operation was successful, or *False* otherwise
         """
-        # prepare data for UPDATE
+        # obtain the fully-qualified name of the current Sob subclass
         cls_name: str = f"{self.__class__.__module__}.{self.__class__.__qualname__}"
+
+        # prepare data for UPDATE
         pk_name: str = sob_db_columns[cls_name][0]
         tbl_name: str = sob_db_specs[cls_name][0]
         update_data: dict[str, Any] = self.get(omit_nulls=False,
@@ -237,7 +235,9 @@ class PySob:
         :param errors: incidental error messages (might be a non-empty list)
         :return: the number of deleted tuples, or *None* if error
         """
+        # obtain the fully-qualified name of the current Sob subclass
         cls_name: str = f"{self.__class__.__module__}.{self.__class__.__qualname__}"
+
         where_data: dict[str, Any]
         pk_name: str = sob_db_columns[cls_name][0]
         tbl_name: str = sob_db_specs[cls_name][0]
@@ -266,7 +266,7 @@ class PySob:
 
     def clear(self) -> None:
         """
-        Set all of the object's attributes to *None*.
+        Set all the object's attributes to *None*.
 
         This should be of very infrequent use, if any, and thus extreme care should be exercised.
         """
@@ -289,7 +289,8 @@ class PySob:
         result: dict[str, Any] = {}
 
         if not (omit_nulls and self.id is None):
-            # PK attribute in DB table might have a different name
+            # obtain the fully-qualified name of the current Sob subclass
+            # (PK attribute in DB table might have a different name)
             cls_name: str = f"{self.__class__.__module__}.{self.__class__.__qualname__}"
             pk_name: str = sob_db_columns[cls_name][0]
             result[pk_name] = self.id
@@ -300,12 +301,10 @@ class PySob:
         else:
             for k, v in self.__dict__.items():
                 if k.islower() and not (k.startswith("_") or k == "id" or (omit_nulls and v is None)):
-                    if not isinstance(v, Enum):
-                        result[k] = v
-                    elif isinstance(v, StrEnumUseName):
-                        result[k] = v.name
-                    else:
+                    if isinstance(v, Enum):
                         result[k] = v.value
+                    else:
+                        result[k] = v
         return result
 
     def set(self,
@@ -317,7 +316,9 @@ class PySob:
 
         :param data: key/value pairs to set the object with
         """
+        # obtain the fully-qualified name of the current Sob subclass
         cls_name: str = f"{self.__class__.__module__}.{self.__class__.__qualname__}"
+
         cls_enums: dict[str, type[IntEnum | StrEnum]] = sob_attrs_enum.get(cls_name, {})
         logger: Logger = sob_loggers.get(cls_name)
 
@@ -328,7 +329,7 @@ class PySob:
 
             # normalize 'ky' to a string
             if isinstance(ky, Enum):
-                if isinstance(ky, IntEnum | StrEnumUseName):
+                if isinstance(ky, IntEnum):
                     ky = ky.name.lower()
                 else:
                     ky = ky.value.lower()
@@ -343,10 +344,7 @@ class PySob:
                                           cls_enum=cls_enum) if not isinstance(val, Enum) else val
                 elif isinstance(val, Enum):
                     # 'val' is an 'enum', although no 'Enum' mapping exists for 'ky'
-                    if isinstance(val, StrEnumUseName):
-                        val = val.name
-                    else:
-                        val = val.value
+                    val = val.value
 
                 # register the key/value pair
                 self.__dict__[ky] = val
@@ -366,8 +364,10 @@ class PySob:
         # initialize the return variable
         result: dict[str | StrEnum, Any] | None = None
 
-        # obtain the mapping of input names to attributes
+        # obtain the fully-qualified name of the current Sob subclass
         cls_name: str = f"{self.__class__.__module__}.{self.__class__.__qualname__}"
+
+        # obtain the mapping of input names to attributes
         mapping: list[tuple[str | StrEnum, str]] = sob_attrs_input.get(cls_name)
         if mapping:
             result = {}
@@ -407,10 +407,11 @@ class PySob:
         # initialize the return variable
         result: bool = False
 
+        # obtain the fully-qualified name of the current Sob subclass
         cls_name: str = f"{self.__class__.__module__}.{self.__class__.__qualname__}"
-        tbl_name: str = sob_db_specs[cls_name][0]
 
         # build the WHERE clause
+        tbl_name: str = sob_db_specs[cls_name][0]
         where_data: dict[str, Any] = self.get_unique_attrs()
         if not where_data:
             # use object's available data
@@ -460,7 +461,9 @@ class PySob:
         # initialize the return variable
         result: bool = False
 
+        # obtain the fully-qualified name of the current Sob subclass
         cls_name: str = f"{self.__class__.__module__}.{self.__class__.__qualname__}"
+
         tbl_name: str = sob_db_specs[cls_name][0]
         logger: Logger = sob_loggers.get(cls_name)
 
@@ -533,7 +536,9 @@ class PySob:
 
         :return: a list with the names of the object's attributes as mapped to a database table.
         """
+        # obtain the fully-qualified name of the current Sob subclass
         cls_name: str = f"{self.__class__.__module__}.{self.__class__.__qualname__}"
+
         return list(sob_db_columns[cls_name])
 
         # alternatively, the following code would retrieve the DB columns from the class instance:
@@ -562,7 +567,9 @@ class PySob:
         # initialize the return variable
         result: dict[str, Any] = {}
 
+        # obtain the fully-qualified name of the current Sob subclass
         cls_name: str = f"{self.__class__.__module__}.{self.__class__.__qualname__}"
+
         if self.id:
             # use the object's 'id' attribute
             pk_name: str = sob_db_columns[cls_name][0]
@@ -606,10 +613,11 @@ class PySob:
         :param committable: whether to commit the database operations upon errorless completion
         :param errors: incidental error messages (might be a non-empty list)
         """
+        # obtain the fully-qualified name of the current Sob subclass
         cls_name: str = f"{self.__class__.__module__}.{self.__class__.__qualname__}"
-        logger: Logger = sob_loggers.get(cls_name)
 
         # must be implemented by subclasses containing references
+        logger: Logger = sob_loggers.get(cls_name)
         msg: str = (f"Subclass {self.__class__.__module__}.{self.__class__.__qualname__} "
                     "failed to implement 'load_references()'")
         if isinstance(errors, list):
@@ -641,10 +649,11 @@ class PySob:
         :param committable: whether to commit the database operations upon errorless completion
         :param errors: incidental error messages (might be a non-empty list)
         """
+        # obtain the fully-qualified name of the current Sob subclass
         cls_name: str = f"{self.__class__.__module__}.{self.__class__.__qualname__}"
-        logger: Logger = sob_loggers.get(cls_name)
 
         # must be implemented by subclasses containing references
+        logger: Logger = sob_loggers.get(cls_name)
         msg: str = (f"Subclass {self.__class__.__module__}.{self.__class__.__qualname__} "
                     "failed to implement 'invalidate_references()'")
         if isinstance(errors, list):
@@ -653,8 +662,9 @@ class PySob:
             logger.error(msg=msg)
 
     # noinspection PyPep8
-    @staticmethod
-    def initialize(db_specs: tuple[type[StrEnum] | list[str], type[int | str]] |
+    @classmethod
+    def initialize(cls,
+                   db_specs: tuple[type[StrEnum] | list[str], type[int | str]] |
                              tuple[type[StrEnum] | list[str], type[int], bool],
                    attrs_enum: dict[str | StrEnum, type[IntEnum | StrEnum]] = None,
                    attrs_unique: list[tuple[str | StrEnum]] = None,
@@ -690,64 +700,44 @@ class PySob:
         :param attrs_input: mapping of names used in input to actual attribute names
         :param logger: optional logger
         """
-        # obtain the invoking class
-        cls: type[Sob] = PySob.__get_invoking_class(logger=logger)
-        # initialize its data
-        if cls:
-            # retrieve the list of DB names
-            cls_name: str = f"{cls.__module__}.{cls.__qualname__}"
-            attrs: list[str] = [attr.value for attr in db_specs[0]] \
-                if issubclass(db_specs[0], StrEnum) else db_specs[0].copy()
-            tbl_name: str = attrs.pop(0)
-            tbl_alias = PySob.__make_alias(tbl_name=tbl_name)
+        # obtain the fully-qualified name of the current Sob subclass
+        cls_name: str = f"{cls.__module__}.{cls.__qualname__}"
 
-            # register the names of DB columnns (first column is the PK)
-            sob_db_columns.update({cls_name: tuple(attrs)})
+        # retrieve the list of DB names
+        attrs: list[str] = [attr.value for attr in db_specs[0]] \
+            if issubclass(db_specs[0], StrEnum) else db_specs[0].copy()
+        tbl_name: str = attrs.pop(0)
+        tbl_alias = PySob.__make_alias(tbl_name=tbl_name)
 
-            # register the DB specs (table name, table alias, PK type, PK entity state)
-            if len(db_specs) > 2:
-                sob_db_specs[cls_name] = (tbl_name, tbl_alias, db_specs[1], db_specs[2])
-            else:
-                # PK defaults to being an identity attribute in the DB for type 'int'
-                sob_db_specs[cls_name] = (tbl_name, tbl_alias, db_specs[1], db_specs[1] is int)
+        # register the names of DB columnns (first column is the PK)
+        sob_db_columns.update({cls_name: tuple(attrs)})
 
-            # register the mappings of enums to attributes
-            if attrs_enum:
-                sob_attrs_enum.update({cls_name: {str(k): v
-                                                  for k, v in attrs_enum.items()}})
-            # register the sets of unique attributes
-            if attrs_unique:
-                sob_attrs_unique.update({cls_name: [tuple([str(attr) for attr in attrs])
-                                                    for attrs in attrs_unique]})
-            # register the names used for data input
-            if attrs_input:
-                sob_attrs_input.update({cls_name: [(attrs[0], str(attrs[1]) if attrs[1] else None)
-                                                   for attrs in attrs_input]})
-            if logger:
-                sob_loggers[cls_name] = logger
-                logger.debug(msg=f"Inicialized access data for class {cls_name}")
+        # register the DB specs (table name, table alias, PK type, PK entity state)
+        if len(db_specs) > 2:
+            sob_db_specs[cls_name] = (tbl_name, tbl_alias, db_specs[1], db_specs[2])
+        else:
+            # PK defaults to being an identity attribute in the DB for type 'int'
+            sob_db_specs[cls_name] = (tbl_name, tbl_alias, db_specs[1], db_specs[1] is int)
 
-    @staticmethod
-    def get_logger() -> Logger | None:
-        """
-        Get the logger associated with the current subclass.
+        # register the mappings of enums to attributes
+        if attrs_enum:
+            sob_attrs_enum.update({cls_name: {str(k): v
+                                              for k, v in attrs_enum.items()}})
+        # register the sets of unique attributes
+        if attrs_unique:
+            sob_attrs_unique.update({cls_name: [tuple([str(attr) for attr in attrs])
+                                                for attrs in attrs_unique]})
+        # register the names used for data input
+        if attrs_input:
+            sob_attrs_input.update({cls_name: [(attrs[0], str(attrs[1]) if attrs[1] else None)
+                                               for attrs in attrs_input]})
+        if logger:
+            sob_loggers[cls_name] = logger
+            logger.debug(msg=f"Inicialized access data for class {cls_name}")
 
-        :return: the logger associated with the subclass, of *None* if error or not provided
-        """
-        # initialize the return variable
-        result: Logger | None = None
-
-        # obtain the invoking class
-        cls: type[Sob] = PySob.__get_invoking_class()
-
-        if cls:
-            cls_name: str = f"{cls.__module__}.{cls.__qualname__}"
-            result = sob_loggers.get(cls_name)
-
-        return result
-
-    @staticmethod
-    def count(joins: list[tuple[type[Sob],
+    @classmethod
+    def count(cls,
+              joins: list[tuple[type[Sob],
                                 list[tuple[str | StrEnum, str | StrEnum,
                                            Literal["=", "<>", "<=", ">="] | None,
                                            Literal["and", "or"] | None]],
@@ -808,38 +798,34 @@ class PySob:
         :param errors: incidental error messages (might be a non-empty list)
         :return: the number of tuples counted, or *None* if error
         """
-        # inicialize the return variable
-        result: int | None = None
-
         # make sure to have an errors list
         if not isinstance(errors, list):
             errors = []
 
-        # obtain the invoking class
-        cls: type[Sob] = PySob.__get_invoking_class(errors=errors)
+        # obtain the fully-qualified name of the current Sob subclass
+        cls_name: str = f"{cls.__module__}.{cls.__qualname__}"
 
-        if cls:
-            # build the FROM clause
-            from_clause: str = PySob.__build_from_clause(subcls=cls,
-                                                         joins=joins)
-            # normalize the data for the WHERE clause
-            if where_data:
-                where_data = PySob.prepend_aliases(attrs=where_data)
+        # build the FROM clause
+        from_clause: str = PySob.__build_from_clause(cls_name=cls_name,
+                                                     joins=joins)
+        # normalize the data for the WHERE clause
+        if where_data:
+            where_data = PySob.prepend_aliases(attrs=where_data)
 
-            # retrieve the data
-            result = db_count(table=from_clause,
-                              count_clause=count_clause,
-                              where_clause=where_clause,
-                              where_vals=where_vals,
-                              where_data=where_data,
-                              engine=db_engine,
-                              connection=db_conn,
-                              committable=committable,
-                              errors=errors)
-        return result
+        # retrieve the data
+        return db_count(table=from_clause,
+                        count_clause=count_clause,
+                        where_clause=where_clause,
+                        where_vals=where_vals,
+                        where_data=where_data,
+                        engine=db_engine,
+                        connection=db_conn,
+                        committable=committable,
+                        errors=errors)
 
-    @staticmethod
-    def exists(joins: list[tuple[type[Sob],
+    @classmethod
+    def exists(cls,
+               joins: list[tuple[type[Sob],
                                  list[tuple[str | StrEnum, str | StrEnum,
                                             Literal["=", "<>", "<=", ">="] | None,
                                             Literal["and", "or"] | None]],
@@ -902,40 +888,36 @@ class PySob:
         :param errors: incidental error messages (might be a non-empty list)
         :return: *True* if the criteria for tuple existence were met, *False* otherwise, or *None* if error
         """
-        # inicialize the return variable
-        result: bool | None = None
-
         # make sure to have an errors list
         if not isinstance(errors, list):
             errors = []
 
-        # obtain the invoking class
-        cls: type[Sob] = PySob.__get_invoking_class(errors=errors)
+        # obtain the fully-qualified name of the current Sob subclass
+        cls_name: str = f"{cls.__module__}.{cls.__qualname__}"
 
-        if cls:
-            # build the FROM clause
-            from_clause: str = PySob.__build_from_clause(subcls=cls,
-                                                         joins=joins)
-            # normalize the data for the WHERE clause
-            if where_data:
-                where_data = PySob.prepend_aliases(attrs=where_data)
+        # build the FROM clause
+        from_clause: str = PySob.__build_from_clause(cls_name=cls_name,
+                                                     joins=joins)
+        # normalize the data for the WHERE clause
+        if where_data:
+            where_data = PySob.prepend_aliases(attrs=where_data)
 
-            # execute the query
-            result = db_exists(table=from_clause,
-                               where_clause=where_clause,
-                               where_vals=where_vals,
-                               where_data=where_data,
-                               min_count=min_count,
-                               max_count=max_count,
-                               engine=db_engine,
-                               connection=db_conn,
-                               committable=committable,
-                               errors=errors)
-        return result
+        # execute the query
+        return db_exists(table=from_clause,
+                         where_clause=where_clause,
+                         where_vals=where_vals,
+                         where_data=where_data,
+                         min_count=min_count,
+                         max_count=max_count,
+                         engine=db_engine,
+                         connection=db_conn,
+                         committable=committable,
+                         errors=errors)
 
     # noinspection PyPep8
-    @staticmethod
-    def get_values(attrs: tuple[str | StrEnum, ...],
+    @classmethod
+    def get_values(cls,
+                   attrs: tuple[str | StrEnum, ...],
                    joins: list[tuple[type[Sob],
                                      list[tuple[str | StrEnum, str | StrEnum,
                                                 Literal["=", "<>", "<=", ">="] | None,
@@ -1033,78 +1015,76 @@ class PySob:
         if not isinstance(errors, list):
             errors = []
 
-        # obtain the invoking class
-        cls: type[Sob] = PySob.__get_invoking_class(errors=errors)
+        # obtain the fully-qualified name of the current Sob subclass
+        cls_name: str = f"{cls.__module__}.{cls.__qualname__}"
 
-        if cls:
-            cls_name: str = f"{cls.__module__}.{cls.__qualname__}"
+        # build the FROM clause
+        from_clause: str = PySob.__build_from_clause(cls_name=cls_name,
+                                                     joins=joins)
+        # build the aliased attributes list
+        aliased_attrs: list[str] = PySob.prepend_aliases(attrs=list(attrs))
+        alias: str = sob_db_specs[cls_name][1]
+        columns: tuple[str] = sob_db_columns.get(cls_name)
+        # prepend aliases to plain, un-aliased, attributes
+        for idx, aliased_attr in enumerate(aliased_attrs.copy()):
+            if "." not in aliased_attr and aliased_attr in columns:
+                aliased_attrs[idx] = alias + "." + aliased_attr
 
-            # build the FROM clause
-            from_clause: str = PySob.__build_from_clause(subcls=cls,
-                                                         joins=joins)
-            # build the aliased attributes list
-            aliased_attrs: list[str] = PySob.prepend_aliases(attrs=list(attrs))
-            alias: str = sob_db_specs[cls_name][1]
-            columns: tuple[str] = sob_db_columns.get(cls_name)
-            # prepend aliases to plain, un-aliased, attributes
-            for idx, aliased_attr in enumerate(aliased_attrs.copy()):
-                if "." not in aliased_attr and aliased_attr in columns:
-                    aliased_attrs[idx] = alias + "." + aliased_attr
+        # normalize the data for the WHERE clause
+        if where_data:
+            where_data = PySob.prepend_aliases(attrs=where_data)
 
-            # normalize the data for the WHERE clause
-            if where_data:
-                where_data = PySob.prepend_aliases(attrs=where_data)
+        # normalize the 'ORDER BY' clause
+        if orderby_clause:
+            orderby_clause = PySob.__normalize_orderby(orderby=orderby_clause)
 
-            # normalize the 'ORDER BY' clause
-            if orderby_clause:
-                orderby_clause = PySob.__normalize_orderby(orderby=orderby_clause)
+        # retrieve the data
+        sel_stmt: str = f"SELECT DISTINCT {', '.join(aliased_attrs)} FROM {from_clause}"
+        recs: list[tuple] = db_select(sel_stmt=sel_stmt,
+                                      where_clause=where_clause,
+                                      where_vals=where_vals,
+                                      where_data=where_data,
+                                      orderby_clause=orderby_clause,
+                                      min_count=min_count,
+                                      max_count=max_count,
+                                      offset_count=offset_count,
+                                      limit_count=limit_count,
+                                      engine=db_engine,
+                                      connection=db_conn,
+                                      committable=committable,
+                                      errors=errors)
+        if recs:
+            # build the list of enums mapped to the attributes
+            mapped_enums: dict[str, type[IntEnum | StrEnum]] = {}
+            for aliased_attr in aliased_attrs:
+                if "." in aliased_attr:
+                    alias, attr = aliased_attr.split(sep=".")
+                    subcls_name: str = PySob.__from_alias(alias=alias)
+                    if subcls_name:
+                        cls_enums: dict[str, type[IntEnum | StrEnum]] = sob_attrs_enum.get(subcls_name, {})
+                        cls_enum: type[IntEnum | StrEnum] = cls_enums.get(attr)
+                        # noinspection PyUnreachableCode
+                        if cls_enum:
+                            mapped_enums[aliased_attr] = cls_enum
+            if mapped_enums:
+                # replace values with corresponding enums
+                result = []
+                for rec in recs:
+                    rec_list: list = []
+                    for idx, val in enumerate(iterable=rec):
+                        mapped_enum: type[IntEnum | StrEnum] = mapped_enums.get(aliased_attrs[idx])
+                        rec_list.append(PySob.__to_enum(attr_value=val,
+                                                        cls_enum=mapped_enum))
+                    result.append(tuple(rec_list))
 
-            # retrieve the data
-            sel_stmt: str = f"SELECT DISTINCT {', '.join(aliased_attrs)} FROM {from_clause}"
-            recs: list[tuple] = db_select(sel_stmt=sel_stmt,
-                                          where_clause=where_clause,
-                                          where_vals=where_vals,
-                                          where_data=where_data,
-                                          orderby_clause=orderby_clause,
-                                          min_count=min_count,
-                                          max_count=max_count,
-                                          offset_count=offset_count,
-                                          limit_count=limit_count,
-                                          engine=db_engine,
-                                          connection=db_conn,
-                                          committable=committable,
-                                          errors=errors)
-            if recs:
-                # build the list of enums mapped to the attributes
-                mapped_enums: dict[str, type[IntEnum | StrEnum]] = {}
-                for aliased_attr in aliased_attrs:
-                    if "." in aliased_attr:
-                        alias, attr = aliased_attr.split(sep=".")
-                        subcls_name: str = PySob.__from_alias(alias=alias)
-                        if subcls_name:
-                            cls_enums: dict[str, type[IntEnum | StrEnum]] = sob_attrs_enum.get(subcls_name, {})
-                            cls_enum: type[IntEnum | StrEnum] = cls_enums.get(attr)
-                            # noinspection PyUnreachableCode
-                            if cls_enum:
-                                mapped_enums[aliased_attr] = cls_enum
-                if mapped_enums:
-                    # replace values with corresponding enums
-                    result = []
-                    for rec in recs:
-                        rec_list: list = []
-                        for idx, val in enumerate(iterable=rec):
-                            mapped_enum: type[IntEnum | StrEnum] = mapped_enums.get(aliased_attrs[idx])
-                            rec_list.append(PySob.__to_enum(attr_value=val,
-                                                            cls_enum=mapped_enum))
-                        result.append(tuple(rec_list))
-
-            if result is None:
-                result = recs
+        if result is None:
+            result = recs
 
         return result
 
-    @staticmethod
-    def get_single(__references: type[Sob | list[Sob]] | list[type[Sob | list[Sob]]] = None,
+    @classmethod
+    def get_single(cls,
+                   __references: type[Sob | list[Sob]] | list[type[Sob | list[Sob]]] = None,
                    /,
                    joins: list[tuple[type[Sob],
                                      list[tuple[str | StrEnum, str | StrEnum,
@@ -1176,55 +1156,54 @@ class PySob:
         if not isinstance(errors, list):
             errors = []
 
-        # obtain the invoking class
-        cls: type[Sob] = PySob.__get_invoking_class(errors=errors)
+        # obtain the fully-qualified name of the current Sob subclass
+        cls_name: str = f"{cls.__module__}.{cls.__qualname__}"
 
-        if cls:
-            # build the FROM clause
-            from_clause: str = PySob.__build_from_clause(subcls=cls,
-                                                         joins=joins)
-            # build the attributes list
-            cls_name: str = f"{cls.__module__}.{cls.__qualname__}"
-            alias: str = sob_db_specs[cls_name][1]
-            attrs: list[str] = [f"{alias}.{attr}" for attr in sob_db_columns.get(cls_name)]
+        # build the FROM clause
+        from_clause: str = PySob.__build_from_clause(cls_name=cls_name,
+                                                     joins=joins)
+        # build the attributes list
+        alias: str = sob_db_specs[cls_name][1]
+        attrs: list[str] = [f"{alias}.{attr}" for attr in sob_db_columns.get(cls_name)]
 
-            # normalize the data for the WHERE clause
-            if where_data:
-                where_data = PySob.prepend_aliases(attrs=where_data)
+        # normalize the data for the WHERE clause
+        if where_data:
+            where_data = PySob.prepend_aliases(attrs=where_data)
 
-            # retrieve the data
-            sel_stmt: str = f"SELECT {', '.join(attrs)} FROM {from_clause}"
-            recs: list[tuple[int | str]] = db_select(sel_stmt=sel_stmt,
-                                                     where_clause=where_clause,
-                                                     where_vals=where_vals,
-                                                     where_data=where_data,
-                                                     min_count=0,
-                                                     max_count=1,
-                                                     engine=db_engine,
-                                                     connection=db_conn,
-                                                     committable=committable,
-                                                     errors=errors)
-            if recs:
-                # build the SOB object
-                sob: Sob = cls()
-                data: dict[str, Any] = {}
-                for idx, attr in enumerate(iterable=sob_db_columns.get(cls_name)):
-                    data[attr] = recs[0][idx]
-                    sob.set(data=data)
+        # retrieve the data
+        sel_stmt: str = f"SELECT {', '.join(attrs)} FROM {from_clause}"
+        recs: list[tuple[int | str]] = db_select(sel_stmt=sel_stmt,
+                                                 where_clause=where_clause,
+                                                 where_vals=where_vals,
+                                                 where_data=where_data,
+                                                 min_count=0,
+                                                 max_count=1,
+                                                 engine=db_engine,
+                                                 connection=db_conn,
+                                                 committable=committable,
+                                                 errors=errors)
+        if recs:
+            # build the SOB object
+            sob: Sob = cls()
+            data: dict[str, Any] = {}
+            for idx, attr in enumerate(iterable=sob_db_columns.get(cls_name)):
+                data[attr] = recs[0][idx]
+                sob.set(data=data)
 
-                if not __references or PySob.__load_references(__references,
-                                                               objs=[sob],
-                                                               db_engine=db_engine,
-                                                               db_conn=db_conn,
-                                                               committable=committable,
-                                                               errors=errors) is not None:
-                    result = sob
+            if not __references or PySob.__load_references(__references,
+                                                           objs=[sob],
+                                                           db_engine=db_engine,
+                                                           db_conn=db_conn,
+                                                           committable=committable,
+                                                           errors=errors) is not None:
+                result = sob
 
         return result
 
     # noinspection PyPep8
-    @staticmethod
-    def retrieve(__references: type[Sob | list[Sob]] | list[type[Sob | list[Sob]]] = None,
+    @classmethod
+    def retrieve(cls,
+                 __references: type[Sob | list[Sob]] | list[type[Sob | list[Sob]]] = None,
                  /,
                  joins: list[tuple[type[Sob],
                                    list[tuple[str | StrEnum, str | StrEnum,
@@ -1315,64 +1294,63 @@ class PySob:
         if not isinstance(errors, list):
             errors = []
 
-        # obtain the invoking class
-        cls: type[Sob] = PySob.__get_invoking_class(errors=errors)
+        # obtain the fully-qualified name of the current Sob subclass
+        cls_name: str = f"{cls.__module__}.{cls.__qualname__}"
 
-        if cls:
-            # build the FROM clause
-            from_clause: str = PySob.__build_from_clause(subcls=cls,
-                                                         joins=joins)
-            # build the attributes list
-            cls_name: str = f"{cls.__module__}.{cls.__qualname__}"
-            alias: str = sob_db_specs[cls_name][1]
-            attrs: list[str] = [f"{alias}.{attr}" for attr in sob_db_columns.get(cls_name)]
+        # build the FROM clause
+        from_clause: str = PySob.__build_from_clause(cls_name=cls_name,
+                                                     joins=joins)
+        # build the attributes list
+        alias: str = sob_db_specs[cls_name][1]
+        attrs: list[str] = [f"{alias}.{attr}" for attr in sob_db_columns.get(cls_name)]
 
-            # normalize the data for the WHERE clause
-            if where_data:
-                where_data = PySob.prepend_aliases(attrs=where_data)
+        # normalize the data for the WHERE clause
+        if where_data:
+            where_data = PySob.prepend_aliases(attrs=where_data)
 
-            # normalize the 'ORDER BY' clause
-            if orderby_clause:
-                orderby_clause = PySob.__normalize_orderby(orderby=orderby_clause)
+        # normalize the 'ORDER BY' clause
+        if orderby_clause:
+            orderby_clause = PySob.__normalize_orderby(orderby=orderby_clause)
 
-            # retrieve the data
-            sel_stmt: str = f"SELECT DISTINCT {', '.join(attrs)} FROM {from_clause}"
-            recs: list[tuple[int | str]] = db_select(sel_stmt=sel_stmt,
-                                                     where_clause=where_clause,
-                                                     where_vals=where_vals,
-                                                     where_data=where_data,
-                                                     orderby_clause=orderby_clause,
-                                                     min_count=min_count,
-                                                     max_count=max_count,
-                                                     offset_count=offset_count,
-                                                     limit_count=limit_count,
-                                                     engine=db_engine,
-                                                     connection=db_conn,
-                                                     committable=committable,
-                                                     errors=errors)
-            if recs is not None:
-                # build the objects list
-                objs: list[Sob] = []
-                for rec in recs:
-                    data: dict[str, Any] = {}
-                    for idx, attr in enumerate(iterable=sob_db_columns.get(cls_name)):
-                        data[attr] = rec[idx]
-                    sob: type[Sob] = cls()
-                    sob.set(data=data)
-                    objs.append(sob)
+        # retrieve the data
+        sel_stmt: str = f"SELECT DISTINCT {', '.join(attrs)} FROM {from_clause}"
+        recs: list[tuple[int | str]] = db_select(sel_stmt=sel_stmt,
+                                                 where_clause=where_clause,
+                                                 where_vals=where_vals,
+                                                 where_data=where_data,
+                                                 orderby_clause=orderby_clause,
+                                                 min_count=min_count,
+                                                 max_count=max_count,
+                                                 offset_count=offset_count,
+                                                 limit_count=limit_count,
+                                                 engine=db_engine,
+                                                 connection=db_conn,
+                                                 committable=committable,
+                                                 errors=errors)
+        if recs is not None:
+            # build the objects list
+            objs: list[Sob] = []
+            for rec in recs:
+                data: dict[str, Any] = {}
+                for idx, attr in enumerate(iterable=sob_db_columns.get(cls_name)):
+                    data[attr] = rec[idx]
+                sob: type[Sob] = cls()
+                sob.set(data=data)
+                objs.append(sob)
 
-                if not __references or not objs or PySob.__load_references(__references,
-                                                                           objs=objs,
-                                                                           db_engine=db_engine,
-                                                                           db_conn=db_conn,
-                                                                           committable=committable,
-                                                                           errors=errors) is not None:
-                    result = objs
+            if not __references or not objs or PySob.__load_references(__references,
+                                                                       objs=objs,
+                                                                       db_engine=db_engine,
+                                                                       db_conn=db_conn,
+                                                                       committable=committable,
+                                                                       errors=errors) is not None:
+                result = objs
 
         return result
 
-    @staticmethod
-    def erase(where_clause: str = None,
+    @classmethod
+    def erase(cls,
+              where_clause: str = None,
               where_vals: tuple = None,
               where_data: dict[str | StrEnum | tuple |
                                tuple[str | StrEnum,
@@ -1423,40 +1401,47 @@ class PySob:
         :param errors: incidental error messages (might be a non-empty list)
         :return: the number of deleted tuples, or *None* if error
         """
-        # initialize the return variable
-        result: int | None = None
-
         # make sure to have an errors list
         if not isinstance(errors, list):
             errors = []
 
-        # obtain the invoking class
-        cls: type[Sob] = PySob.__get_invoking_class(errors=errors)
+        # obtain the fully-qualified name of the current Sob subclass
+        cls_name: str = f"{cls.__module__}.{cls.__qualname__}"
 
-        if cls:
-            cls_name: str = f"{cls.__module__}.{cls.__qualname__}"
-            tbl_name: str = sob_db_specs[cls_name][0]
-            alias: str = sob_db_specs[cls_name][1]
+        tbl_name: str = sob_db_specs[cls_name][0]
+        alias: str = sob_db_specs[cls_name][1]
 
-            # normalize the data for the 'WHERE" clause
-            if where_data:
-                where_data = PySob.prepend_aliases(attrs=where_data)
+        # normalize the data for the 'WHERE" clause
+        if where_data:
+            where_data = PySob.prepend_aliases(attrs=where_data)
 
-            # delete specified rows
-            result = db_delete(delete_stmt=f"DELETE {alias} FROM {tbl_name} AS {alias}",
-                               where_clause=where_clause,
-                               where_vals=where_vals,
-                               where_data=where_data,
-                               min_count=min_count,
-                               max_count=max_count,
-                               engine=db_engine,
-                               connection=db_conn,
-                               committable=committable,
-                               errors=errors)
-        return result
+        # DELETE flavors using aliases:
+        #   1- Canonical SQL: DELETE FROM <tbl_name> AS <tbl_alias>...
+        #   2- Oracle-specific: DELETE FROM <tbl_name> <tbl_alias>...
+        #   3- SQLServer-specific: DELETE <tbl_alias> FROM <tbl_name> AS <tbl_alias>...
+        if not db_engine:
+            db_engine = db_get_default_engine()
+        delete_stmt: str = f"DELETE FROM {tbl_name} AS {alias}"
+        if db_engine == DbEngine.ORACLE:
+            delete_stmt = delete_stmt.replace(f"{tbl_name} AS", f"{tbl_name}")
+        elif db_engine == DbEngine.SQLSERVER:
+            delete_stmt = delete_stmt.replace("FROM", f"{alias} FROM")
 
-    @staticmethod
-    def store(insert_data: dict[str, Any] = None,
+        # delete specified rows
+        return db_delete(delete_stmt=delete_stmt,
+                         where_clause=where_clause,
+                         where_vals=where_vals,
+                         where_data=where_data,
+                         min_count=min_count,
+                         max_count=max_count,
+                         engine=db_engine,
+                         connection=db_conn,
+                         committable=committable,
+                         errors=errors)
+
+    @classmethod
+    def store(cls,
+              insert_data: dict[str, Any] = None,
               return_cols: dict[str, Any] = None,
               db_engine: DbEngine = None,
               db_conn: Any = None,
@@ -1481,39 +1466,33 @@ class PySob:
         :param errors: incidental error messages (might be a non-empty list)
         :return: the values of *return_cols*, the number of inserted tuples (0 ou 1), or *None* if error
         """
-        # initialize the return variable
-        result: tuple | int | None = None
-
         # make sure to have an errors list
         if not isinstance(errors, list):
             errors = []
 
-        # obtain the invoking class
-        cls: type[Sob] = PySob.__get_invoking_class(errors=errors)
+        # obtain the fully-qualified name of the current Sob subclass
+        cls_name: str = f"{cls.__module__}.{cls.__qualname__}"
 
         # delete specified rows
-        if cls:
-            cls_name: str = f"{cls.__module__}.{cls.__qualname__}"
-            tbl_name: str = sob_db_specs[cls_name][0]
+        tbl_name: str = sob_db_specs[cls_name][0]
 
-            # persist the data
-            result = db_insert(insert_stmt=f"INSERT INTO {tbl_name}",
-                               insert_data=insert_data,
-                               return_cols=return_cols,
-                               engine=db_engine,
-                               connection=db_conn,
-                               committable=committable,
-                               errors=errors)
-        return result
+        # persist the data
+        return db_insert(insert_stmt=f"INSERT INTO {tbl_name}",
+                         insert_data=insert_data,
+                         return_cols=return_cols,
+                         engine=db_engine,
+                         connection=db_conn,
+                         committable=committable,
+                         errors=errors)
 
     # noinspection PyPep8
-    @staticmethod
-    def build_from_clause(joins: list[tuple[type[Sob],
+    @classmethod
+    def build_from_clause(cls,
+                          joins: list[tuple[type[Sob],
                                             list[tuple[str | StrEnum, str | StrEnum,
                                                        Literal["=", "<>", "<=", ">="] | None,
                                                        Literal["and", "or"] | None]],
-                                            Literal["inner", "full", "left", "right"] | None]] | list[tuple],
-                          errors: list[str] = None) -> str:
+                                            Literal["inner", "full", "left", "right"] | None]] | list[tuple]) -> str:
         """
         Build the query's *FROM* clause.
 
@@ -1528,37 +1507,37 @@ class PySob:
             3. the third element is the type of the join ("inner", "full", "left", "right", defaults to "inner")
 
         :param joins: the list of *JOIN* clauses
-        :param errors: incidental error messages (might be a non-empty list)
         :return: the *FROM* clause containing the *JOIN*s
         """
-        # initialize the return variable
-        result: str | None = None
+        # obtain the fully-qualified name of the current Sob subclass
+        cls_name: str = f"{cls.__module__}.{cls.__qualname__}"
 
-        # obtain the invoking class
-        cls: type[Sob] = PySob.__get_invoking_class(errors=errors)
-        if cls:
-            # build the 'FROM' clause
-            result = PySob.__build_from_clause(subcls=cls,
-                                               joins=joins)
-        return result
+        return PySob.__build_from_clause(cls_name=cls_name,
+                                         joins=joins)
 
-    @staticmethod
-    def get_alias(errors: list[str] = None) -> str:
+    @classmethod
+    def get_logger(cls) -> Logger | None:
+        """
+        Get the logger associated with the current subclass.
+
+        :return: the logger associated with the subclass, or *None* if not provided
+        """
+        # obtain the fully-qualified name of the current Sob subclass
+        cls_name: str = f"{cls.__module__}.{cls.__qualname__}"
+
+        return sob_loggers.get(cls_name)
+
+    @classmethod
+    def get_alias(cls) -> str:
         """
         Retrieve the alias for the database table associated with the invoking class.
 
         :return: the alias for the database table associated with the invoking class
         """
-        # initialize the return variable
-        result: str | None = None
+        # obtain the fully-qualified name of the current Sob subclass
+        cls_name: str = f"{cls.__module__}.{cls.__qualname__}"
 
-        # obtain the invoking class
-        cls: type[Sob] = PySob.__get_invoking_class(errors=errors)
-        if cls:
-            cls_name: str = f"{cls.__module__}.{cls.__qualname__}"
-            result = sob_db_specs[cls_name][1]
-
-        return result
+        return sob_db_specs[cls_name][1]
 
     @staticmethod
     def prepend_alias(attr: str | StrEnum) -> str:
@@ -1621,17 +1600,16 @@ class PySob:
 
     # noinspection PyPep8
     @staticmethod
-    def __build_from_clause(subcls: type[Sob],
+    def __build_from_clause(cls_name: str,
                             joins: list[tuple[type[Sob],
                                               list[tuple[str | StrEnum, str | StrEnum,
                                                          Literal["=", "<>", "<=", ">="] | None,
                                                          Literal["and", "or"] | None]],
-                                              Literal["inner", "full", "left", "right"] | None]] |
-                                   list[tuple] = None) -> str:
+                                              Literal["inner", "full", "left", "right"] | None]] | list[tuple]) -> str:
         """
         Build the query's *FROM* clause.
 
-        Optionally, *joins* holds a list of tuples specifying the table joins, with the following format:
+        The parameter *joins* holds a list of tuples specifying the table joins, with the following format:
             1. the first element in the tuple identifies the table:
                 - a singlet, with the type of the *Sob* subclass whose database table is to be joined
             2. a 2/3/4-tuple, or a list of 2/3/4-tuples, informs on the *ON* fragment conditions:
@@ -1641,13 +1619,10 @@ class PySob:
                 - the connector to the next condition ("and" or "or", defaults to "and")
             3. the third element is the type of the join ("inner", "full", "left", "right", defaults to "inner")
 
-        :param subcls: the reference *Sob* subclass
+        :param cls_name: the fully-qualified name of the reference *Sob* subclass
         :param joins: the list of *JOIN* clauses
         :return: the *FROM* clause containing the *JOIN*s
         """
-        # obtain the the fully-qualified name of the class type
-        cls_name: str = f"{subcls.__module__}.{subcls.__qualname__}"
-
         # initialize the return variable
         result: str = sob_db_specs[cls_name][0] + " AS " + sob_db_specs[cls_name][1]
 
@@ -1706,71 +1681,6 @@ class PySob:
             result += PySob.prepend_alias(attr=attr) + " " + sort_dir + ", "
 
         return result[:-2]
-
-    @staticmethod
-    def __get_invoking_class(errors: list[str] = None,
-                             logger: Logger = None) -> type[Sob] | None:
-        """
-        Retrieve the fully-qualified type of the subclass currently being accessed.
-
-        :param errors: incidental error messages (might be a non-empty list)
-        :param logger: optional logger
-        :return: the fully-qualified type of the subclass currently being accessed, or *None* if error
-        :
-        """
-        # initialize the return variable
-        result: type[Sob] | None = None
-
-        # obtain the invoking function
-        caller_frame: FrameInfo = stack()[1]
-        invoking_function: str = caller_frame.function
-        mark: str = f".{invoking_function}("
-
-        # obtain the invoking class and its filepath
-        caller_frame = stack()[2]
-        context: str = caller_frame.code_context[0]
-        pos_to: int = context.find(mark)
-        pos_from: int = context.rfind(" ", 0, pos_to) + 1
-        classname: str = context[pos_from:pos_to]
-        while not classname[0].isalpha():
-            classname = classname[1:]
-        filepath: Path = Path(caller_frame.filename)
-        mark = "." + classname
-
-        for name in sob_db_specs:
-            if name.endswith(mark):
-                try:
-                    pos: int = name.rfind(".")
-                    module_name: str = name[:pos]
-                    module: ModuleType = import_module(name=module_name)
-                    result = getattr(module,
-                                     classname)
-                except Exception as e:
-                    if logger:
-                        logger.warning(msg=exc_format(exc=e,
-                                                      exc_info=sys.exc_info()))
-                break
-
-        if not result and SOB_BASE_FOLDER:
-            try:
-                pos: int = filepath.parts.index(SOB_BASE_FOLDER)
-                module_name: str = Path(*filepath.parts[pos:]).as_posix()[:-3].replace("/", ".")
-                module: ModuleType = import_module(name=module_name)
-                result = getattr(module,
-                                 classname)
-            except Exception as e:
-                if logger:
-                    logger.warning(msg=exc_format(exc=e,
-                                                  exc_info=sys.exc_info()))
-        if not result:
-            msg: str = (f"Unable to obtain class '{classname}', "
-                        f"filepath '{filepath}', from invoking function '{invoking_function}'")
-            if logger:
-                logger.error(msg=f"{msg} - invocation frame {caller_frame}")
-            if isinstance(errors, list):
-                errors.append(msg)
-
-        return result
 
     @staticmethod
     def __load_references(__references:  type[Sob | list[Sob]] | list[type[Sob | list[Sob]]],
@@ -1913,11 +1823,9 @@ class PySob:
         # initialize the return variable
         result: Any = attr_value
 
-        if attr_value and cls_enum:
+        if attr_value is not None and cls_enum is not None:
             for e in cls_enum:
-                if (attr_value == e.value and
-                    issubclass(cls_enum, StrEnum) and not issubclass(cls_enum, StrEnumUseName)) or \
-                   (attr_value.lower() == e.name.lower() and issubclass(cls_enum, IntEnum | StrEnumUseName)):
+                if attr_value == e.value:
                     result = e
                     break
 
