@@ -33,7 +33,14 @@ class PySob:
     The only instance attribute defined at root class level is *id* (type *int* or *str*), the object's
     identification, which may be mapped to a different name in storage. Other attributes are expected to be
     defined by its subclasses.
+
+    Note that *__is_frozen* is part of the *frozen object* pattern, which prevents attributes to be added to
+    class instances after *__init__* is completed. It starts as a class attribute, and is meant to be shadowed
+    at the instance level. This behaviour may be overridden/reinstated at any time, by having the instance invoke
+    *_freeze()* or *_unfreeze()*.
     """
+    # allow adding attributes to instances
+    __is_frozen: bool = False
 
     def __init__(self,
                  __references: type[Sob | list[Sob]] | list[type[Sob | list[Sob]]] = None,
@@ -77,6 +84,50 @@ class PySob:
                       db_conn=db_conn,
                       committable=committable,
                       errors=errors)
+
+        # henceforth prevent attributes to be added to the instance
+        self.__is_frozen: bool = True
+
+    def __set_attr__(self,
+                     name: str,
+                     value: Any) -> None:
+        """
+        Prevent adding new attributes to the class instance after *__init__* has completed.
+
+        This is an implementation of the *frozen object* pattern, that allows adding attributes
+        to the class instance during *__init__*, but prevents it afterwards.
+
+        :param name: the name of the attribute to be added
+        :param value: the value to be assigned to the attribute
+        :raises TypeError: in case of attempts to add attributes after object initialization
+        """
+        # avoid side effects from 'not hasattr(self, name)', which invokes 'gatattr()'
+        if self.__is_frozen and name not in dir(self):
+            # instance is frozen, thus new attributes are blocked
+            raise TypeError(f"Cannot add new attribute '{name}' after initialization.")
+
+        # note that this is not equivalent to 'super().__setattr__()'
+        object.__setattr__(self,
+                           name,
+                           value)
+
+    def _freeze(self) -> None:
+        """
+        Block adding new attributes to the class instance.
+        """
+        # '_PySob__is_frozen' results from Python's name-mangling mechanism
+        object.__setattr__(self,
+                           "_PySob__is_frozen",
+                           True)
+
+    def _unfreeze(self) -> None:
+        """
+        Unblock adding new attributes to the class instance.
+        """
+        # '_PySob__is_frozen' results from Python's name-mangling mechanism
+        object.__setattr__(self,
+                           "_PySob__is_frozen",
+                           False)
 
     def insert(self,
                db_engine: DbEngine = None,
@@ -1823,6 +1874,7 @@ class PySob:
         # initialize the return variable
         result: Any = attr_value
 
+        # noinspection PyUnreachableCode
         if attr_value is not None and cls_enum is not None:
             for e in cls_enum:
                 if attr_value == e.value:
