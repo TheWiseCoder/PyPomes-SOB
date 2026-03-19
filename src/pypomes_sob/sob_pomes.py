@@ -60,8 +60,6 @@ class PySob:
         The parameter *committable* is relevant only if *db_conn* is provided, and is otherwise ignored.
         A rollback is always attempted, if an error occurs.
 
-        If provided, *logger* is used, and saved for further usage in operations involving the object instances.
-
         :param __references: the *Sob* references to load at object instantiation time
         :param where_data: the criteria to load the object's data from the database
         :param db_engine: the reference database engine (uses the default engine, if not provided)
@@ -88,9 +86,9 @@ class PySob:
         # henceforth prevent attributes to be added to the instance
         self.__is_frozen: bool = True
 
-    def __set_attr__(self,
-                     name: str,
-                     value: Any) -> None:
+    def __setattr__(self,
+                    name: str,
+                    value: Any) -> None:
         """
         Prevent adding new attributes to the class instance after *__init__* has completed.
 
@@ -106,7 +104,7 @@ class PySob:
             # instance is frozen, thus new attributes are blocked
             raise TypeError(f"Cannot add new attribute '{name}' after initialization.")
 
-        # note that this is not equivalent to 'super().__setattr__()'
+        # note that this is not equivalent to invoking 'super().__setattr__()'
         object.__setattr__(self,
                            name,
                            value)
@@ -1565,6 +1563,22 @@ class PySob:
 
         return PySob.__build_from_clause(cls_name=cls_name,
                                          joins=joins)
+
+    @classmethod
+    def set_logger(cls,
+                   logger: Logger | None) -> None:
+        """
+        Set the logger associated with the current subclass.
+
+        To unset the logger, pass *None* as value for *logger*.
+        """
+        # obtain the fully-qualified name of the current Sob subclass
+        cls_name: str = f"{cls.__module__}.{cls.__qualname__}"
+
+        if logger:
+            sob_loggers[cls_name] = logger
+        else:
+            sob_loggers.pop(cls_name, None)
 
     @classmethod
     def get_logger(cls) -> Logger | None:
