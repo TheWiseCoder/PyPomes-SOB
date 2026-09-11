@@ -9,7 +9,7 @@ from pypomes_db import (
     db_exists, db_count, db_select,
     db_insert, db_update, db_delete
 )
-from typing import Any, Literal, TypeVar
+from typing import Any, Literal, Self, TypeVar
 
 from .sob_config import (
     SOB_MAX_THREADS,
@@ -239,7 +239,7 @@ class PySob:
         Attempt to persist the current state of the object in the database with the appropriate operation.
 
         The operation to be performed will depend on whether the object's identification in the database
-        (its *id attribute) has been set or not (yielding respectively, *UPDATE* or *INSERT*).
+        (its *id* attribute) has been set or not (yielding respectively, *UPDATE* or *INSERT*).
 
         The targer database engine, specified or default, must have been previously configured.
         The parameter *committable* is relevant only if *db_conn* is provided, and is otherwise ignored.
@@ -435,14 +435,7 @@ class PySob:
         """
         Attempt to determine if the current state of the object is persisted in the database.
 
-        These are the sequence of steps to follow:
-            - use the object's identification in the database (its *id* attribute), if set
-            - use the first set of *unique* attributes found with non-null values
-            - use all the object's public attributes with non-null values
-
-        The optional sets of *unique* attributes are specifed at class initialization time, with the
-        appropriate parameter in the *initialize()* operation.
-
+        All the object's public attributes currently having non-null values are used in this determination.
         The targer database engine, specified or default, must have been previously configured.
         The parameter *committable* is relevant only if *db_conn* is provided, and is otherwise ignored.
         A rollback is always attempted, if an error occurs.
@@ -461,11 +454,8 @@ class PySob:
 
         # build the WHERE clause
         tbl_name: str = sob_db_specs[cls_name][0]
-        where_data: dict[str, Any] = self.get_unique_attrs()
-        if not where_data:
-            # use object's available data
-            where_data = self.get(omit_nulls=True,
-                                  keep_enums=False)
+        where_data: dict[str, Any] = self.get(omit_nulls=True,
+                                              keep_enums=False)
         # execute the query
         if where_data:
             result = db_exists(table=tbl_name,
@@ -1150,7 +1140,7 @@ class PySob:
                    db_engine: DbEngine = None,
                    db_conn: Any = None,
                    committable: bool = None,
-                   errors: list[str] = None) -> Sob | None:
+                   errors: list[str] = None) -> Self | None:
         """
         Retrieve the single instance of the *Sob* object from the database, as per the criteria provided.
 
@@ -1276,7 +1266,7 @@ class PySob:
                  db_engine: DbEngine = None,
                  db_conn: Any = None,
                  committable: bool = None,
-                 errors: list[str] = None) -> list[Sob] | None:
+                 errors: list[str] = None) -> list[Self] | None:
         """
         Retrieve the instances of *Sob* objects from the database, as per the criteria provided.
 
