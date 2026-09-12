@@ -46,7 +46,7 @@ class PySob:
                  __references: type[Sob | list[Sob]] | list[type[Sob | list[Sob]]] = None,
                  /,
                  where_data: dict[str, Any] = None,
-                 db_engine: DbEngine = None,
+                 db_engine: DbEngine | str = None,
                  db_conn: Any = None,
                  committable: bool = None,
                  errors: list[str] = None) -> None:
@@ -128,7 +128,7 @@ class PySob:
                            False)
 
     def insert(self,
-               db_engine: DbEngine = None,
+               db_engine: DbEngine | str = None,
                db_conn: Any = None,
                committable: bool = None,
                errors: list[str] = None) -> bool:
@@ -188,7 +188,7 @@ class PySob:
         return not errors
 
     def update(self,
-               db_engine: DbEngine = None,
+               db_engine: DbEngine | str = None,
                db_conn: Any = None,
                committable: bool = None,
                errors: list[str] = None) -> bool:
@@ -231,7 +231,7 @@ class PySob:
                          errors=errors) is not None
 
     def persist(self,
-                db_engine: DbEngine = None,
+                db_engine: DbEngine | str = None,
                 db_conn: Any = None,
                 committable: bool = None,
                 errors: list[str] = None) -> bool:
@@ -267,7 +267,7 @@ class PySob:
         return result
 
     def delete(self,
-               db_engine: DbEngine = None,
+               db_engine: DbEngine | str = None,
                db_conn: Any = None,
                committable: bool = None,
                errors: list[str] = None) -> int | None:
@@ -428,7 +428,7 @@ class PySob:
         return result
 
     def is_persisted(self,
-                     db_engine: DbEngine = None,
+                     db_engine: DbEngine | str = None,
                      db_conn: Any = None,
                      committable: bool = None,
                      errors: list[str] = None) -> bool | None:
@@ -470,7 +470,7 @@ class PySob:
              __references: type[Sob | list[Sob]] | list[type[Sob | list[Sob]]] = None,
              /,
              omit_nulls: bool = True,
-             db_engine: DbEngine = None,
+             db_engine: DbEngine | str = None,
              db_conn: Any = None,
              committable: bool = None,
              errors: list[str] = None) -> bool:
@@ -573,25 +573,14 @@ class PySob:
         """
         Retrieve the names of the object's public attributes as mapped to the corresponding database table.
 
+        Note that instance attributes not mapped to column names are omitted.
+
         :return: a list with the names of the object's attributes as mapped to a database table.
         """
         # obtain the fully-qualified name of the current Sob subclass
         cls_name: str = f"{self.__class__.__module__}.{self.__class__.__qualname__}"
 
         return list(sob_db_columns[cls_name])
-
-        # alternatively, the following code would retrieve the DB columns from the class instance:
-        # cls_name: str = f"{self.__class__.__module__}.{self.__class__.__qualname__}"
-        # pk_name: str = sob_db_columns[cls_name][0]
-        #
-        # result: list[str] = []
-        # for key in self.__dict__:
-        #     if key == "id":
-        #         result.append(pk_name)
-        #     elif key.islower() and not key.startswith("_"):
-        #         result.append(key)
-        #
-        # return result
 
     def get_unique_attrs(self) -> dict[str, Any]:
         """
@@ -633,7 +622,7 @@ class PySob:
     def load_references(self,
                         __references: type[Sob | list[Sob]] | list[type[Sob | list[Sob]]],
                         /,
-                        db_engine: DbEngine = None,
+                        db_engine: DbEngine | str = None,
                         db_conn: Any = None,
                         committable: bool = None,
                         errors: list[str] = None) -> None:
@@ -669,7 +658,7 @@ class PySob:
     def invalidate_references(self,
                               __references: type[Sob | list[Sob]] | list[type[Sob | list[Sob]]],
                               /,
-                              db_engine: DbEngine = None,
+                              db_engine: DbEngine | str = None,
                               db_conn: Any = None,
                               committable: bool = None,
                               errors: list[str] = None) -> None:
@@ -789,7 +778,7 @@ class PySob:
                                      Literal["=", ">", "<", ">=", "<=",
                                              "<>", "in", "like", "between"] | None,
                                      Literal["and", "or"] | None], Any] = None,
-              db_engine: DbEngine = None,
+              db_engine: DbEngine | str = None,
               db_conn: Any = None,
               committable: bool = None,
               errors: list[str] = None) -> int | None:
@@ -878,7 +867,7 @@ class PySob:
                                       Literal["and", "or"] | None], Any] = None,
                min_count: int = None,
                max_count: int = None,
-               db_engine: DbEngine = None,
+               db_engine: DbEngine | str = None,
                db_conn: Any = None,
                committable: bool = None,
                errors: list[str] = None) -> bool | None:
@@ -976,7 +965,7 @@ class PySob:
                    max_count: int = None,
                    offset_count: int = None,
                    limit_count: int = None,
-                   db_engine: DbEngine = None,
+                   db_engine: DbEngine | str = None,
                    db_conn: Any = None,
                    committable: bool = None,
                    errors: list[str] = None) -> list[tuple] | None:
@@ -1137,7 +1126,7 @@ class PySob:
                                           Literal["=", ">", "<", ">=", "<=",
                                                   "<>", "in", "like", "between"] | None,
                                           Literal["and", "or"] | None], Any] = None,
-                   db_engine: DbEngine = None,
+                   db_engine: DbEngine | str = None,
                    db_conn: Any = None,
                    committable: bool = None,
                    errors: list[str] = None) -> Self | None:
@@ -1263,7 +1252,7 @@ class PySob:
                  max_count: int = None,
                  offset_count: int = None,
                  limit_count: int = None,
-                 db_engine: DbEngine = None,
+                 db_engine: DbEngine | str = None,
                  db_conn: Any = None,
                  committable: bool = None,
                  errors: list[str] = None) -> list[Self] | None:
@@ -1398,7 +1387,7 @@ class PySob:
                                      Literal["and", "or"] | None], Any] = None,
               min_count: int = None,
               max_count: int = None,
-              db_engine: DbEngine = None,
+              db_engine: DbEngine | str = None,
               db_conn: Any = None,
               committable: bool = None,
               errors: list[str] = None) -> int | None:
@@ -1482,7 +1471,7 @@ class PySob:
     def store(cls,
               insert_data: dict[str, Any] = None,
               return_cols: dict[str, Any] = None,
-              db_engine: DbEngine = None,
+              db_engine: DbEngine | str = None,
               db_conn: Any = None,
               committable: bool = None,
               errors: list[str] = None) -> tuple | int | None:
