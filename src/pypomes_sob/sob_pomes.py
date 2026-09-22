@@ -558,9 +558,10 @@ class PySob:
                     msg: str = f"Attribute '{attr}' not found in instance of class {cls_name}"
                     if logger:
                         logger.error(msg=msg)
-
+        if not errors:
+            result = True
             # load the instance's references
-            if not errors and __references:
+            if __references:
                 result = PySob.__load_references(__references,
                                                  objs=[self],
                                                  db_engine=db_engine,
@@ -945,7 +946,7 @@ class PySob:
     # noinspection PyPep8
     @classmethod
     def get_values(cls,
-                   attrs: tuple[str | StrEnum, ...],
+                   attrs: tuple[str | StrEnum, ...] | str | StrEnum,
                    joins: list[tuple[type[Sob],
                                      list[tuple[str | StrEnum, str | StrEnum,
                                                 Literal["=", "<>", "<=", ">="] | None,
@@ -968,7 +969,7 @@ class PySob:
                    db_engine: DbEngine | str = None,
                    db_conn: Any = None,
                    committable: bool = None,
-                   errors: list[str] = None) -> list[tuple] | None:
+                   errors: list[str] = None) -> list | list[tuple] | None:
         """
         Retrieve the values of *attrs* from the database, as per the criteria provided.
 
@@ -976,6 +977,10 @@ class PySob:
         to database tables will have the proper aliases automatically prepended. For an attribute specified
         as a un-aliased plain string, the alias corresponding to the database table associated with the
         invoking class will be used for that purpose, if a column with the same name exists therein.
+
+        If *attrs* is a tuple containing one or more elements, then the result list will contain tuples
+        holding the values corresponding to the attributes named therein. Otherwise, if *attrs* holds
+        the name of a single attribute, then a list of scalar values is returned.
 
         Optionally, *joins* holds a list of tuples specifying the table joins, with the following format:
             1. the first element in the tuple identifies the table:
@@ -1037,11 +1042,16 @@ class PySob:
         :return: a list containing tuples with the values retrieved, *[]* on empty result, or *None* if error
         """
         # inicialize the return variable
-        result: list[tuple] | None = None
+        result: list | list[tuple] | None = None
 
         # make sure to have an errors list
         if not isinstance(errors, list):
             errors = []
+
+        # make sure attrs is a tuple
+        is_scalar: bool = isinstance(attrs, str | StrEnum)
+        if is_scalar:
+            attrs = (attrs,)
 
         # obtain the fully-qualified name of the current Sob subclass
         cls_name: str = f"{cls.__module__}.{cls.__qualname__}"
@@ -1108,30 +1118,34 @@ class PySob:
         if result is None:
             result = recs
 
+        # change 'result' to a list of scalar values
+        if result and is_scalar:
+            result = [i[0] for i in result]
+
         return result
 
     @classmethod
-    def get_single(cls,
-                   __references: type[Sob | list[Sob]] | list[type[Sob | list[Sob]]] = None,
-                   /,
-                   joins: list[tuple[type[Sob],
-                                     list[tuple[str | StrEnum, str | StrEnum,
-                                                Literal["=", "<>", "<=", ">="] | None,
-                                                Literal["and", "or"] | None]],
-                                     Literal["inner", "full", "left", "right"] | None]] | list[tuple] = None,
-                   where_clause: str = None,
-                   where_vals: tuple = None,
-                   where_data: dict[str | StrEnum | tuple |
-                                    tuple[str | StrEnum,
-                                          Literal["=", ">", "<", ">=", "<=",
-                                                  "<>", "in", "like", "between"] | None,
-                                          Literal["and", "or"] | None], Any] = None,
-                   db_engine: DbEngine | str = None,
-                   db_conn: Any = None,
-                   committable: bool = None,
-                   errors: list[str] = None) -> Self | None:
+    def get_instance(cls,
+                     __references: type[Sob | list[Sob]] | list[type[Sob | list[Sob]]] = None,
+                     /,
+                     joins: list[tuple[type[Sob],
+                                       list[tuple[str | StrEnum, str | StrEnum,
+                                                  Literal["=", "<>", "<=", ">="] | None,
+                                                  Literal["and", "or"] | None]],
+                                       Literal["inner", "full", "left", "right"] | None]] | list[tuple] = None,
+                     where_clause: str = None,
+                     where_vals: tuple = None,
+                     where_data: dict[str | StrEnum | tuple |
+                                      tuple[str | StrEnum,
+                                            Literal["=", ">", "<", ">=", "<=",
+                                                    "<>", "in", "like", "between"] | None,
+                                            Literal["and", "or"] | None], Any] = None,
+                     db_engine: DbEngine | str = None,
+                     db_conn: Any = None,
+                     committable: bool = None,
+                     errors: list[str] = None) -> Self | None:
         """
-        Retrieve the single instance of the *Sob* object from the database, as per the criteria provided.
+        Retrieve the single instance of the *Self* object from the database, as per the criteria provided.
 
         Optionally, *joins* holds a list of tuples specifying the table joins, with the following format:
             1. the first element in the tuple identifies the table:
@@ -1230,34 +1244,34 @@ class PySob:
 
     # noinspection PyPep8
     @classmethod
-    def retrieve(cls,
-                 __references: type[Sob | list[Sob]] | list[type[Sob | list[Sob]]] = None,
-                 /,
-                 joins: list[tuple[type[Sob],
+    def get_instances(cls,
+                      __references: type[Sob | list[Sob]] | list[type[Sob | list[Sob]]] = None,
+                      /,
+                      joins: list[tuple[type[Sob],
                                    list[tuple[str | StrEnum, str | StrEnum,
                                               Literal["=", "<>", "<=", ">="] | None,
                                               Literal["and", "or"] | None]],
                                    Literal["inner", "full", "left", "right"] | None]] | list[tuple] = None,
-                 where_clause: str = None,
-                 where_vals: tuple = None,
-                 where_data: dict[str | StrEnum | tuple |
+                      where_clause: str = None,
+                      where_vals: tuple = None,
+                      where_data: dict[str | StrEnum | tuple |
                                   tuple[str | StrEnum,
                                         Literal["=", ">", "<", ">=", "<=",
                                                 "<>", "in", "like", "between"] | None,
                                         Literal["and", "or"] | None], Any] = None,
-                 orderby_clause: str | StrEnum |
+                      orderby_clause: str | StrEnum |
                                  tuple[str | StrEnum, Literal["asc", "desc"] | None] |
                                  list[str | StrEnum | tuple[StrEnum, Literal["asc", "desc"] | None]] = None,
-                 min_count: int = None,
-                 max_count: int = None,
-                 offset_count: int = None,
-                 limit_count: int = None,
-                 db_engine: DbEngine | str = None,
-                 db_conn: Any = None,
-                 committable: bool = None,
-                 errors: list[str] = None) -> list[Self] | None:
+                      min_count: int = None,
+                      max_count: int = None,
+                      offset_count: int = None,
+                      limit_count: int = None,
+                      db_engine: DbEngine | str = None,
+                      db_conn: Any = None,
+                      committable: bool = None,
+                      errors: list[str] = None) -> list[Self] | None:
         """
-        Retrieve the instances of *Sob* objects from the database, as per the criteria provided.
+        Retrieve the instances of *Self* objects from the database, as per the criteria provided.
 
         Optionally, *joins* holds a list of tuples specifying the table joins, with the following format:
             1. the first element in the tuple identifies the table:
@@ -1746,7 +1760,7 @@ class PySob:
         :param db_conn: optional connection to use (obtains a new one, if not provided)
         :param committable: whether to commit the database operations upon errorless completion
         :param errors: incidental error messages (might be a non-empty list)
-        :return: *True* if at least one references was load, *False* otherwise, or *None* if error
+        :return: *True* if at least one references was loaded, *False* otherwise, or *None* if error
         """
         # make sure '__references' is a list
         if not isinstance(__references, list):
