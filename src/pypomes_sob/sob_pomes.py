@@ -1140,6 +1140,7 @@ class PySob:
                                             Literal["=", ">", "<", ">=", "<=",
                                                     "<>", "in", "like", "between"] | None,
                                             Literal["and", "or"] | None], Any] = None,
+                     must_exist: bool = False,
                      db_engine: DbEngine | str = None,
                      db_conn: Any = None,
                      committable: bool = None,
@@ -1185,6 +1186,7 @@ class PySob:
         :param where_clause: optional criteria for tuple selection
         :param where_vals: values to be associated with the selection criteria
         :param where_data: the selection criteria specified as key-value pairs
+        :param must_exist: specify the minimum count of 1 on SELECT (defaults to *False*)
         :param db_engine: the reference database engine (uses the default engine, if not provided)
         :param db_conn: optional connection to use (obtains a new one, if not provided)
         :param committable: whether to commit the database operations upon errorless completion
@@ -1218,7 +1220,7 @@ class PySob:
                                                  where_clause=where_clause,
                                                  where_vals=where_vals,
                                                  where_data=where_data,
-                                                 min_count=0,
+                                                 min_count=1 if must_exist else 0,
                                                  max_count=1,
                                                  engine=db_engine,
                                                  connection=db_conn,
