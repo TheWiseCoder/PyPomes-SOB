@@ -85,8 +85,8 @@ class PySob:
                 db_retrieval = True
                 self.set(data=where_data)
             self.load(__references,
-                      omit_nulls=True,
                       new_data=new_data,
+                      omit_nulls=True,
                       db_retrieval=db_retrieval,
                       db_engine=db_engine,
                       db_conn=db_conn,
@@ -479,8 +479,8 @@ class PySob:
     def load(self,
              __references: type[Sob | list[Sob]] | list[type[Sob | list[Sob]]] = None,
              /,
-             omit_nulls: bool = True,
              new_data: dict[str, Any] = None,
+             omit_nulls: bool = True,
              db_retrieval: bool = True,
              db_engine: DbEngine | str = None,
              db_conn: Any = None,
@@ -507,9 +507,9 @@ class PySob:
         A rollback is always attempted, if an error occurs.
 
         :param __references: the *Sob* references to load
+        :param new_data: data to override existing values, or to create a new instance
         :param omit_nulls: whether to include the attributes with null values (defaults to *True*)
         :param db_retrieval: whether to retrieve the corresponding object from the database (defaults to *True*)
-        :param new_data: data to override existing values, or to create a new instance
         :param db_engine: the reference database engine (uses the default engine, if not provided)
         :param db_conn: optional connection to use (obtains a new one, if not provided)
         :param committable: whether to commit the database operations upon errorless completion
@@ -560,7 +560,7 @@ class PySob:
                 obj_exists = len(recs) == 1
                 rec: list[Any] = list(recs[0]) if obj_exists else [None] * len(attrs)
                 for idx, attr in enumerate(iterable=attrs):
-                    val: Any = new_data.get(attr)
+                    val: Any = new_data.get(attr, where_data.get(attr))
                     if val:
                         rec[idx] = val
                 recs = [tuple(rec)]
