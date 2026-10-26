@@ -36,8 +36,8 @@ class PySob:
 
     Note that *__is_frozen* is part of the *frozen object* pattern, which prevents attributes to be added to
     class instances after *__init__* is completed. It starts as a class attribute, and is meant to be shadowed
-    at the instance level. This behaviour may be overridden/reinstated at any time, by having the instance invoke
-    *_freeze()* or *_unfreeze()*.
+    at the instance level. This behaviour may be overridden/reinstated at any time, by having the object
+    instance invoke *_freeze()* or *_unfreeze()*.
     """
     # allow adding attributes to instances
     __is_frozen: bool = False
@@ -46,6 +46,7 @@ class PySob:
                  __references: type[Sob | list[Sob]] | list[type[Sob | list[Sob]]] = None,
                  /,
                  where_data: dict[str, Any] = None,
+                 new_data: dict[str, Any] = None,
                  db_engine: DbEngine | str = None,
                  db_conn: Any = None,
                  committable: bool = None,
@@ -56,16 +57,20 @@ class PySob:
         If loading the corresponding data from storage is desired, *where_data* should be specifed,
         and the criteria therein should yield just one tuple, when used in a *SELECT* statement.
 
+        If *new_data* is provided, then the values therein will override the values of the object
+        retrieved from the database, if any. Otherwise, a new instance with those values will be inserted.
+
         The targer database engine, specified or default, must have been previously configured.
         The parameter *committable* is relevant only if *db_conn* is provided, and is otherwise ignored.
         A rollback is always attempted, if an error occurs.
 
         :param __references: the *Sob* references to load at object instantiation time
         :param where_data: the criteria to load the object's data from the database
+        :param new_data: data to override existing values, or to create a new instance
         :param db_engine: the reference database engine (uses the default engine, if not provided)
         :param db_conn: optional connection to use (obtains a new one, if not provided)
         :param committable: whether to commit the database operations upon errorless completion
-        :param errors: incidental error messages (might be a non-empty list)
+        :param errors: incidental error messages (may be a non-empty list)
         """
         # maps to the entity's PK in its DB table (returned on INSERT operations)
         self.id: int | str | None = None
@@ -74,10 +79,15 @@ class PySob:
         if not isinstance(errors, list):
             errors = []
 
-        if where_data:
-            self.set(data=where_data)
+        if where_data or new_data:
+            db_retrieval: bool = False
+            if where_data:
+                db_retrieval = True
+                self.set(data=where_data)
             self.load(__references,
                       omit_nulls=True,
+                      new_data=new_data,
+                      db_retrieval=db_retrieval,
                       db_engine=db_engine,
                       db_conn=db_conn,
                       committable=committable,
@@ -146,7 +156,7 @@ class PySob:
         :param db_engine: the reference database engine (uses the default engine, if not provided)
         :param db_conn: optional connection to use (obtains a new one, if not provided)
         :param committable: whether to commit the database operations upon errorless completion
-        :param errors: incidental error messages (might be a non-empty list)
+        :param errors: incidental error messages (may be a non-empty list)
         :return: *True* if the operation was successful, or *False* otherwise
         """
         # obtain the fully-qualified name of the current Sob subclass
@@ -202,7 +212,7 @@ class PySob:
         :param db_engine: the reference database engine (uses the default engine, if not provided)
         :param db_conn: optional connection to use (obtains a new one, if not provided)
         :param committable: whether to commit the database operations upon errorless completion
-        :param errors: incidental error messages (might be a non-empty list)
+        :param errors: incidental error messages (may be a non-empty list)
         :return: *True* if the operation was successful, or *False* otherwise
         """
         # obtain the fully-qualified name of the current Sob subclass
@@ -248,7 +258,7 @@ class PySob:
         :param db_engine: the reference database engine (uses the default engine, if not provided)
         :param db_conn: optional connection to use (obtains a new one, if not provided)
         :param committable: whether to commit the database operations upon errorless completion
-        :param errors: incidental error messages (might be a non-empty list)
+        :param errors: incidental error messages (may be a non-empty list)
         :return: *True* if the operation was successful, or *False* otherwise
         """
         # declare the return variale
@@ -281,7 +291,7 @@ class PySob:
         :param db_engine: the reference database engine (uses the default engine, if not provided)
         :param db_conn: optional connection to use (obtains a new one, if not provided)
         :param committable: whether to commit the database operations upon errorless completion
-        :param errors: incidental error messages (might be a non-empty list)
+        :param errors: incidental error messages (may be a non-empty list)
         :return: the number of deleted tuples, or *None* if error
         """
         # obtain the fully-qualified name of the current Sob subclass
@@ -443,7 +453,7 @@ class PySob:
         :param db_engine: the reference database engine (uses the default engine, if not provided)
         :param db_conn: optional connection to use (obtains a new one, if not provided)
         :param committable: whether to commit the database operations upon errorless completion
-        :param errors: incidental error messages (might be a non-empty list)
+        :param errors: incidental error messages (may be a non-empty list)
         :return: *True* the object's current state is persisted, *False* otherwise, or *None* if error
         """
         # initialize the return variable
@@ -470,6 +480,8 @@ class PySob:
              __references: type[Sob | list[Sob]] | list[type[Sob | list[Sob]]] = None,
              /,
              omit_nulls: bool = True,
+             new_data: dict[str, Any] = None,
+             db_retrieval: bool = True,
              db_engine: DbEngine | str = None,
              db_conn: Any = None,
              committable: bool = None,
@@ -483,62 +495,84 @@ class PySob:
             - use all the object's public attributes with non-null values
 
         The optional sets of *unique* attributes are specifed at class initialization time, with the
-        appropriate parameter in the *initialize()* operation.
+        appropriate parameter in the *initialize()* class operation.
+
+        if *db_retrieval* is specified, then retrieving the object from the database will be attemped.
+        If *new_data* is provided, then the values therein will override the values of the object
+        retrieved from the database, if any. Otherwise, a new instance with those values will be inserted.
+        Note that if *db_retrieval* is *False* and *new_data* is not provided, an error is returned.
 
         The targer database engine, specified or default, must have been previously configured.
         The parameter *committable* is relevant only if *db_conn* is provided, and is otherwise ignored.
         A rollback is always attempted, if an error occurs.
 
         :param __references: the *Sob* references to load
-        :param omit_nulls: whether to include the attributes with null values
+        :param omit_nulls: whether to include the attributes with null values (defaults to *True*)
+        :param db_retrieval: whether to retrieve the corresponding object from the database (defaults to *True*)
+        :param new_data: data to override existing values, or to create a new instance
         :param db_engine: the reference database engine (uses the default engine, if not provided)
         :param db_conn: optional connection to use (obtains a new one, if not provided)
         :param committable: whether to commit the database operations upon errorless completion
-        :param errors: incidental error messages (might be a non-empty list)
+        :param errors: incidental error messages (may be a non-empty list)
         :return: *True* if the operation was successful, or *False* otherwise
         """
         # initialize the return variable
         result: bool = False
 
-        # obtain the fully-qualified name of the current Sob subclass
-        cls_name: str = f"{self.__class__.__module__}.{self.__class__.__qualname__}"
-
-        tbl_name: str = sob_db_specs[cls_name][0]
-        logger: Logger = sob_loggers.get(cls_name)
-
-        # build the WHERE clause
-        where_data: dict[str, Any] = self.get_unique_attrs()
-        if not where_data:
-            # use object's available data
-            where_data = self.get(omit_nulls=omit_nulls,
-                                  keep_enums=False)
-
         # make sure to have an errors list
         if not isinstance(errors, list):
             errors = []
 
-        # loading the object from the database might fail
+        # obtain the fully-qualified name of the current Sob subclass
+        cls_name: str = f"{self.__class__.__module__}.{self.__class__.__qualname__}"
+
+        # obtain the database table and columns
+        tbl_name: str = sob_db_specs[cls_name][0]
         attrs: list[str] = self.get_columns()
-        recs: list[tuple] = db_select(sel_stmt=f"SELECT {', '.join(attrs)} FROM {tbl_name}",
-                                      where_data=where_data,
-                                      limit_count=2,
-                                      engine=db_engine,
-                                      connection=db_conn,
-                                      committable=committable,
-                                      errors=errors)
+
+        # obtain the operations logger
+        logger: Logger = sob_loggers.get(cls_name)
+
+        # build the WHERE clause
+
+        # loading the object from the database might fail
+        recs: list[tuple] = []
+        where_data: dict[str, Any] = {}
+        obj_exists: bool = True
+        if db_retrieval:
+            where_data = self.get_unique_attrs()
+            if not where_data:
+                # use object's available data
+                where_data = self.get(omit_nulls=omit_nulls,
+                                      keep_enums=False)
+            recs = db_select(sel_stmt=f"SELECT {', '.join(attrs)} FROM {tbl_name}",
+                             where_data=where_data,
+                             limit_count=2,
+                             engine=db_engine,
+                             connection=db_conn,
+                             committable=committable,
+                             errors=errors)
         if recs is not None:
             msg: str | None = None
-            if len(recs) == 0:
-                msg = "No record"
-            elif len(recs) > 1:
+            if len(recs) > 1:
                 msg = "More than one record"
+            elif new_data:
+                obj_exists = len(recs) == 1
+                rec: list[Any] = list(recs[0]) if obj_exists else [None] * len(attrs)
+                for idx, attr in enumerate(iterable=attrs):
+                    val: Any = new_data.get(attr)
+                    if val:
+                        rec[idx] = val
+                recs = [tuple(rec)]
+            elif len(recs) == 0:
+                msg = "No record"
             if msg:
                 msg += f" found on table {tbl_name} for {dict_stringify(where_data)}"
                 if logger:
                     logger.error(msg=msg)
                 errors.append(msg)
 
-        if not errors:
+        if len(recs) == 1:
             pk_name: str = sob_db_columns[cls_name][0]
             cls_enums: dict[str, type[IntEnum | StrEnum]] = sob_attrs_enum.get(cls_name, {})
             rec: tuple = recs[0]
@@ -553,21 +587,21 @@ class PySob:
                     self.id = val
                 elif attr in self.__dict__:
                     self.__dict__[attr] = val
-                else:
+                elif logger:
                     # HAZARD: instance attributes not correctly mapped to DB columns at object initialization time
-                    msg: str = f"Attribute '{attr}' not found in instance of class {cls_name}"
-                    if logger:
-                        logger.error(msg=msg)
-        if not errors:
-            result = True
-            # load the instance's references
-            if __references:
-                result = PySob.__load_references(__references,
-                                                 objs=[self],
-                                                 db_engine=db_engine,
+                    logger.warning(msg=f"Attribute '{attr}' not found in instance of class {cls_name}")
+
+            # insert the object instance in the database and load the instance's references
+            result = ((obj_exists or self.insert(db_engine=db_engine,
                                                  db_conn=db_conn,
                                                  committable=committable,
-                                                 errors=errors) is not None
+                                                 errors=errors)) and
+                      (__references is None or PySob.__load_references(__references,
+                                                                       objs=[self],
+                                                                       db_engine=db_engine,
+                                                                       db_conn=db_conn,
+                                                                       committable=committable,
+                                                                       errors=errors) is not None))
         return result
 
     def get_columns(self) -> list[str]:
@@ -610,8 +644,9 @@ class PySob:
                 data: dict[str, Any] = {}
                 for attr in attr_set:
                     val: Any = self.__dict__.get(attr)
-                    if val is not None:
-                        data[attr] = val
+                    if val is None:
+                        break
+                    data[attr] = val
                 if len(data) == len(attr_set):
                     result = data
                     break
@@ -640,7 +675,7 @@ class PySob:
         :param db_engine: the reference database engine (uses the default engine, if not provided)
         :param db_conn: optional connection to use (obtains a new one, if not provided)
         :param committable: whether to commit the database operations upon errorless completion
-        :param errors: incidental error messages (might be a non-empty list)
+        :param errors: incidental error messages (may be a non-empty list)
         """
         # obtain the fully-qualified name of the current Sob subclass
         cls_name: str = f"{self.__class__.__module__}.{self.__class__.__qualname__}"
@@ -676,7 +711,7 @@ class PySob:
         :param db_engine: the reference database engine (uses the default engine, if not provided)
         :param db_conn: optional connection to use (obtains a new one, if not provided)
         :param committable: whether to commit the database operations upon errorless completion
-        :param errors: incidental error messages (might be a non-empty list)
+        :param errors: incidental error messages (may be a non-empty list)
         """
         # obtain the fully-qualified name of the current Sob subclass
         cls_name: str = f"{self.__class__.__module__}.{self.__class__.__qualname__}"
@@ -824,7 +859,7 @@ class PySob:
         :param db_engine: the reference database engine (uses the default engine, if not provided)
         :param db_conn: optional connection to use (obtains a new one, if not provided)
         :param committable: whether to commit the database operations upon errorless completion
-        :param errors: incidental error messages (might be a non-empty list)
+        :param errors: incidental error messages (may be a non-empty list)
         :return: the number of tuples counted, or *None* if error
         """
         # make sure to have an errors list
@@ -914,7 +949,7 @@ class PySob:
         :param db_engine: the reference database engine (uses the default engine, if not provided)
         :param db_conn: optional connection to use (obtains a new one, if not provided)
         :param committable: whether to commit the database operations upon errorless completion
-        :param errors: incidental error messages (might be a non-empty list)
+        :param errors: incidental error messages (may be a non-empty list)
         :return: *True* if the criteria for tuple existence were met, *False* otherwise, or *None* if error
         """
         # make sure to have an errors list
@@ -971,7 +1006,7 @@ class PySob:
                    committable: bool = None,
                    errors: list[str] = None) -> list | list[tuple] | None:
         """
-        Retrieve the values of *attrs* from the database, as per the criteria provided.
+        Retrieve the distinct values of *attrs* from the database, as per the criteria provided.
 
         When building the database query, attributes in *attrs* specified as instances of *StrEnum* mapped
         to database tables will have the proper aliases automatically prepended. For an attribute specified
@@ -1038,7 +1073,7 @@ class PySob:
         :param db_engine: the reference database engine (uses the default engine, if not provided)
         :param db_conn: optional connection to use (obtains a new one, if not provided)
         :param committable: whether to commit the database operations upon errorless completion
-        :param errors: incidental error messages (might be a non-empty list)
+        :param errors: incidental error messages (may be a non-empty list)
         :return: a list containing tuples with the values retrieved, *[]* on empty result, or *None* if error
         """
         # inicialize the return variable
@@ -1190,7 +1225,7 @@ class PySob:
         :param db_engine: the reference database engine (uses the default engine, if not provided)
         :param db_conn: optional connection to use (obtains a new one, if not provided)
         :param committable: whether to commit the database operations upon errorless completion
-        :param errors: incidental error messages (might be a non-empty list)
+        :param errors: incidental error messages (may be a non-empty list)
         :return: the instantiated *Sob* object, or *None* if not found or error
         """
         # inicialize the return variable
@@ -1273,7 +1308,7 @@ class PySob:
                       committable: bool = None,
                       errors: list[str] = None) -> list[Self] | None:
         """
-        Retrieve the instances of *Self* objects from the database, as per the criteria provided.
+        Retrieve the distinct instances of *Self* objects from the database, as per the criteria provided.
 
         Optionally, *joins* holds a list of tuples specifying the table joins, with the following format:
             1. the first element in the tuple identifies the table:
@@ -1328,7 +1363,7 @@ class PySob:
         :param db_engine: the reference database engine (uses the default engine, if not provided)
         :param db_conn: optional connection to use (obtains a new one, if not provided)
         :param committable: whether to commit the database operations upon errorless completion
-        :param errors: incidental error messages (might be a non-empty list)
+        :param errors: incidental error messages (may be a non-empty list)
         :return: a list with the objects instantiated, *[]* on empty result, or *None* if error
         """
         # inicialize the return variable
@@ -1442,7 +1477,7 @@ class PySob:
         :param db_engine: the reference database engine (uses the default engine, if not provided)
         :param db_conn: optional connection to use (obtains a new one, if not provided)
         :param committable: whether to commit the database operations upon errorless completion
-        :param errors: incidental error messages (might be a non-empty list)
+        :param errors: incidental error messages (may be a non-empty list)
         :return: the number of deleted tuples, or *None* if error
         """
         # make sure to have an errors list
@@ -1507,7 +1542,7 @@ class PySob:
         :param db_engine: the reference database engine (uses the default engine, if not provided)
         :param db_conn: optional connection to use (obtains a new one, if not provided)
         :param committable: whether to commit the database operations upon errorless completion
-        :param errors: incidental error messages (might be a non-empty list)
+        :param errors: incidental error messages (may be a non-empty list)
         :return: the values of *return_cols*, the number of inserted tuples (0 ou 1), or *None* if error
         """
         # make sure to have an errors list
@@ -1761,7 +1796,7 @@ class PySob:
         :param db_engine: the reference database engine (uses the default engine, if not provided)
         :param db_conn: optional connection to use (obtains a new one, if not provided)
         :param committable: whether to commit the database operations upon errorless completion
-        :param errors: incidental error messages (might be a non-empty list)
+        :param errors: incidental error messages (may be a non-empty list)
         :return: *True* if at least one references was loaded, *False* otherwise, or *None* if error
         """
         # make sure '__references' is a list
